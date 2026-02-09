@@ -1,0 +1,48 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{013BBD25-7B07-44A9-884D-2863D4A62605}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="VittixAutoUpdaterRuntime.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="VittixAutoUpdaterDesign.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="VittixAutoUpdaterRuntime">
+        <MSBuild Projects="VittixAutoUpdaterRuntime.dproj"/>
+    </Target>
+    <Target Name="VittixAutoUpdaterRuntime:Clean">
+        <MSBuild Projects="VittixAutoUpdaterRuntime.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="VittixAutoUpdaterRuntime:Make">
+        <MSBuild Projects="VittixAutoUpdaterRuntime.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="VittixAutoUpdaterDesign">
+        <MSBuild Projects="VittixAutoUpdaterDesign.dproj"/>
+    </Target>
+    <Target Name="VittixAutoUpdaterDesign:Clean">
+        <MSBuild Projects="VittixAutoUpdaterDesign.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="VittixAutoUpdaterDesign:Make">
+        <MSBuild Projects="VittixAutoUpdaterDesign.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="VittixAutoUpdaterRuntime;VittixAutoUpdaterDesign"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="VittixAutoUpdaterRuntime:Clean;VittixAutoUpdaterDesign:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="VittixAutoUpdaterRuntime:Make;VittixAutoUpdaterDesign:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

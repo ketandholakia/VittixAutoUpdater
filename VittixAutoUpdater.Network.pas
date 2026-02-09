@@ -1,10 +1,3 @@
-{******************************************************************************}
-{                         VittixAutoUpdater Component                         }
-{                              Vittix (c) 2026                                 }
-{                                                                              }
-{                  A modern auto-updater for Delphi/Pascal applications       }
-{                                                                              }
-{******************************************************************************}
 unit VittixAutoUpdater.Network;
 
 {$IFDEF FPC}
@@ -14,44 +7,66 @@ unit VittixAutoUpdater.Network;
 interface
 
 uses
-  Classes, SysUtils, VittixAutoUpdater.Types;
+  Classes, SysUtils, StrUtils,
+  VittixAutoUpdater.Types;
 
 type
+  TNetworkLogEvent = reference to procedure(const Msg: string);
+
   // Network manager for all HTTP operations
   TUpdateNetworkManager = class
   private
     FConnectionTimeout: Integer;
     FMaxRetries: Integer;
     FUserAgent: string;
-    
-    function TryGetStream(const Url: string; Stream: TStream): Boolean;
+    FProxy: string;
+    FOnLog: TNetworkLogEvent;
+
+    // State for progress callback
+    FOnProgress: TDownloadProgressEvent;
+    FCancelDownload: Boolean;
+    FLastProgressTick: Cardinal;
+
+    function NormalizeChecksum(const Value: string): string;
     function CalculateSHA256(const FileName: string): string;
+
+    procedure Log(const Msg: string);
+    procedure ReceiveDataHandler(
+      const Sender: TObject;
+      AContentLength, AReadCount: Int64;
+      var Abort: Boolean);
+
+  protected
+    function CreateHttpClient: TObject; // returns THttpClient or FPC client
+
   public
     constructor Create;
-    
+
     // Fetch update manifest from URL (tries multiple mirrors)
-    function FetchManifest(const Urls: TArray<string>; 
-      const AppName: string; 
+    function FetchManifest(const Urls: TArray<string>;
+      const AppName: string;
       out Manifest: TUpdateManifest): Boolean;
-    
+
     // Download file with progress tracking
     function DownloadFile(const Url, SavePath: string;
       OnProgress: TDownloadProgressEvent;
       const ExpectedChecksum: string = ''): Boolean;
-    
+
     // Properties
     property ConnectionTimeout: Integer read FConnectionTimeout write FConnectionTimeout;
     property MaxRetries: Integer read FMaxRetries write FMaxRetries;
     property UserAgent: string read FUserAgent write FUserAgent;
+    property Proxy: string read FProxy write FProxy;
+    property OnLog: TNetworkLogEvent read FOnLog write FOnLog;
   end;
 
 implementation
 
 uses
-  {$IFDEF MSWINDOWS}
+{$IFDEF MSWINDOWS}
   Windows,
-  {$ENDIF}
-  System.Net.HttpClient, 
+{$ENDIF}
+  System.Net.HttpClient,
   System.Net.URLClient,
   System.Hash,
   System.JSON;
@@ -63,133 +78,166 @@ begin
   inherited Create;
   FConnectionTimeout := 30000; // 30 seconds
   FMaxRetries := 3;
-  FUserAgent := 'AppUpdater/1.0';
+  FUserAgent := 'VI_CON-AutoUpdater/1.0';
+  FProxy := '';
 end;
 
-function TUpdateNetworkManager.TryGetStream(const Url: string; 
-  Stream: TStream): Boolean;
-var
-  HttpClient: THttpClient;
-  Response: IHTTPResponse;
-  Retry: Integer;
+procedure TUpdateNetworkManager.Log(const Msg: string);
 begin
-  Result := False;
-  
-  for Retry := 1 to FMaxRetries do
+  if Assigned(FOnLog) then
+    FOnLog(Msg);
+end;
+
+function TUpdateNetworkManager.NormalizeChecksum(const Value: string): string;
+begin
+  Result := Trim(Value);
+
+  if (Length(Result) > 7) and
+     (CompareText(Copy(Result, 1, 7), 'sha256:') = 0) then
+    Result := Copy(Result, 8, MaxInt);
+end;
+
+function TUpdateNetworkManager.CreateHttpClient: TObject;
+var
+  Client: THttpClient;
+begin
+  Client := THttpClient.Create;
+  Client.UserAgent := FUserAgent;
+  Client.ConnectionTimeout := FConnectionTimeout;
+  Client.ResponseTimeout := FConnectionTimeout * 10;
+
+  if FProxy <> '' then
+    Client.ProxySettings := TProxySettings.Create(FProxy, 8080);
+
+  Result := Client;
+end;
+
+procedure TUpdateNetworkManager.ReceiveDataHandler(
+  const Sender: TObject;
+  AContentLength, AReadCount: Int64;
+  var Abort: Boolean);
+var
+  CurrentTick: Cardinal;
+begin
+  CurrentTick := GetTickCount;
+
+  if (CurrentTick - FLastProgressTick >= 33) or
+     (AReadCount = AContentLength) then
   begin
-    HttpClient := THttpClient.Create;
-    try
-      HttpClient.UserAgent := FUserAgent;
-      HttpClient.ConnectionTimeout := FConnectionTimeout;
-      HttpClient.ResponseTimeout := FConnectionTimeout;
-      
-      try
-        Response := HttpClient.Get(Url, Stream);
-        
-        if (Response.StatusCode >= 200) and (Response.StatusCode < 300) then
-        begin
-          Result := True;
-          Break;
-        end;
-        
-      except
-        on E: Exception do
-        begin
-          // Log error and retry
-          if Retry = FMaxRetries then
-            raise ENetworkException.CreateFmt(
-              'Failed to download from %s after %d attempts: %s', 
-              [Url, FMaxRetries, E.Message]);
-          
-          Sleep(1000 * Retry); // Exponential backoff
-        end;
-      end;
-      
-    finally
-      HttpClient.Free;
-    end;
+    if Assigned(FOnProgress) then
+      FOnProgress(Sender, AReadCount, AContentLength, FCancelDownload);
+
+    FLastProgressTick := CurrentTick;
+    Abort := FCancelDownload;
   end;
 end;
 
-function TUpdateNetworkManager.FetchManifest(const Urls: TArray<string>;
-  const AppName: string; out Manifest: TUpdateManifest): Boolean;
+function TUpdateNetworkManager.FetchManifest(
+  const Urls: TArray<string>;
+  const AppName: string;
+  out Manifest: TUpdateManifest): Boolean;
 var
   Url: string;
   Stream: TMemoryStream;
   JsonStr: string;
   JsonObj, AppObj: TJSONObject;
   JsonVal: TJSONValue;
+  Client: THttpClient;
+  Response: IHTTPResponse;
+  Retry: Integer;
 begin
   Result := False;
-  Manifest := Default(TUpdateManifest);
-  
-  // Try each URL until one succeeds
+  FillChar(Manifest, SizeOf(Manifest), 0);
+
   for Url in Urls do
   begin
+    Log('Trying manifest URL: ' + Url);
+
     Stream := TMemoryStream.Create;
     try
-      if TryGetStream(Url, Stream) then
+      for Retry := 1 to FMaxRetries do
       begin
-        // Parse JSON manifest
-        Stream.Position := 0;
-        SetLength(JsonStr, Stream.Size);
-        Stream.Read(JsonStr[1], Stream.Size);
-        
+        Client := THttpClient(CreateHttpClient);
         try
-          JsonObj := TJSONObject.ParseJSONValue(JsonStr) as TJSONObject;
+          Stream.Size := 0;
+          Stream.Position := 0;
+
           try
-            // Look for app-specific section
-            JsonVal := JsonObj.GetValue(AppName);
-            if JsonVal is TJSONObject then
+            Response := Client.Get(Url, Stream);
+
+            if (Response.StatusCode >= 200) and
+               (Response.StatusCode < 300) then
             begin
-              AppObj := JsonVal as TJSONObject;
-              
-              // Extract manifest data
-              Manifest.AppName := AppName;
-              
-              // Version (required)
-              if AppObj.TryGetValue<string>('version', JsonStr) then
-                Manifest.Version := TAppVersion.Create(JsonStr)
-              else
-                Continue;
-              
-              // Download URL (required)
-              if not AppObj.TryGetValue<string>('download_url', Manifest.DownloadUrl) then
-                Continue;
-              
-              // Optional fields
-              AppObj.TryGetValue<string>('release_notes', Manifest.ReleaseNotes);
-              AppObj.TryGetValue<Int64>('file_size', Manifest.FileSize);
-              AppObj.TryGetValue<string>('checksum', Manifest.Checksum);
-              
-              // Min version
-              if AppObj.TryGetValue<string>('min_version', JsonStr) then
-                Manifest.MinVersion := TAppVersion.Create(JsonStr);
-              
-              // Severity
-              if AppObj.TryGetValue<string>('severity', JsonStr) then
-              begin
-                if SameText(JsonStr, 'critical') then
-                  Manifest.Severity := usCritical
-                else if SameText(JsonStr, 'recommended') then
-                  Manifest.Severity := usRecommended
-                else
-                  Manifest.Severity := usOptional;
-              end;
-              
-              // Validate manifest
-              if Manifest.IsValid then
-              begin
-                Result := True;
-                Break;
+              Stream.Position := 0;
+              SetLength(JsonStr, Stream.Size);
+              Stream.Read(JsonStr[1], Stream.Size);
+
+              JsonObj := TJSONObject.ParseJSONValue(JsonStr) as TJSONObject;
+              try
+                JsonVal := JsonObj.GetValue(AppName);
+
+                if JsonVal is TJSONObject then
+                begin
+                  AppObj := JsonVal as TJSONObject;
+
+                  Manifest.AppName := AppName;
+
+                  if AppObj.TryGetValue<string>('version', JsonStr) then
+                    Manifest.Version := TAppVersion.Create(JsonStr)
+                  else
+                    raise Exception.Create('Missing version field');
+
+                  if not AppObj.TryGetValue<string>(
+                    'download_url', Manifest.DownloadUrl) then
+                    raise Exception.Create('Missing download_url');
+
+                  AppObj.TryGetValue<string>(
+                    'release_notes', Manifest.ReleaseNotes);
+
+                  AppObj.TryGetValue<Int64>(
+                    'file_size', Manifest.FileSize);
+
+                  AppObj.TryGetValue<string>(
+                    'checksum', Manifest.Checksum);
+
+                  if AppObj.TryGetValue<string>('min_version', JsonStr) then
+                    Manifest.MinVersion := TAppVersion.Create(JsonStr);
+
+                  if AppObj.TryGetValue<string>('severity', JsonStr) then
+                  begin
+                    if SameText(JsonStr, 'critical') then
+                      Manifest.Severity := usCritical
+                    else if SameText(JsonStr, 'recommended') then
+                      Manifest.Severity := usRecommended
+                    else
+                      Manifest.Severity := usOptional;
+                  end;
+
+                  if Manifest.IsValid then
+                  begin
+                    Result := True;
+                    Exit;
+                  end;
+                end;
+              finally
+                JsonObj.Free;
               end;
             end;
-          finally
-            JsonObj.Free;
+
+          except
+            on E: Exception do
+            begin
+              Log(Format('Manifest attempt %d failed: %s',
+                [Retry, E.Message]));
+
+              if Retry = FMaxRetries then
+                Break;
+
+              TThread.Sleep(1000 * Retry);
+            end;
           end;
-        except
-          on E: Exception do
-            Continue; // Try next URL
+        finally
+          Client.Free;
         end;
       end;
     finally
@@ -198,103 +246,79 @@ begin
   end;
 end;
 
-function TUpdateNetworkManager.DownloadFile(const Url, SavePath: string;
-  OnProgress: TDownloadProgressEvent; 
+function TUpdateNetworkManager.DownloadFile(
+  const Url, SavePath: string;
+  OnProgress: TDownloadProgressEvent;
   const ExpectedChecksum: string): Boolean;
 var
   HttpClient: THttpClient;
   FileStream: TFileStream;
   Response: IHTTPResponse;
-  LastProgressUpdate: Cardinal;
-  ActualChecksum: string;
-  Cancel: Boolean;
+  ActualChecksum, CleanExpected: string;
 begin
   Result := False;
-  Cancel := False;
-  
-  // Create file stream
+  FOnProgress := OnProgress;
+  FCancelDownload := False;
+  FLastProgressTick := GetTickCount;
+
+  Log('Downloading: ' + Url);
+
   FileStream := TFileStream.Create(SavePath, fmCreate);
   try
-    HttpClient := THttpClient.Create;
+    HttpClient := THttpClient(CreateHttpClient);
     try
-      HttpClient.UserAgent := FUserAgent;
-      HttpClient.ConnectionTimeout := FConnectionTimeout;
-      HttpClient.ResponseTimeout := FConnectionTimeout * 10; // Longer for downloads
-      
-      // Set up progress callback
-      if Assigned(OnProgress) then
+      HttpClient.OnReceiveData := ReceiveDataHandler;
+
+      Response := HttpClient.Get(Url, FileStream);
+
+      if (Response.StatusCode < 200) or
+         (Response.StatusCode >= 300) then
+        raise ENetworkException.CreateFmt(
+          'HTTP error %d: %s',
+          [Response.StatusCode, Response.StatusText]);
+
+      if (Response.ContentLength > 0) and
+         (FileStream.Size <> Response.ContentLength) then
+        raise ENetworkException.Create('Downloaded file size mismatch');
+
+      if ExpectedChecksum <> '' then
       begin
-        LastProgressUpdate := GetTickCount;
-        
-        HttpClient.OnReceiveData := procedure(const Sender: TObject; 
-          AContentLength, AReadCount: Int64; var Abort: Boolean)
-        var
-          CurrentTick: Cardinal;
-        begin
-          CurrentTick := GetTickCount;
-          
-          // Throttle updates to 30 FPS
-          if (CurrentTick - LastProgressUpdate >= 33) or 
-             (AReadCount = AContentLength) then
-          begin
-            OnProgress(Sender, AReadCount, AContentLength, Cancel);
-            LastProgressUpdate := CurrentTick;
-            Abort := Cancel;
-          end;
-        end;
-      end;
-      
-      try
-        // Download file
-        Response := HttpClient.Get(Url, FileStream);
-        
-        if (Response.StatusCode >= 200) and (Response.StatusCode < 300) then
-        begin
-          // Verify size
-          if (Response.ContentLength > 0) and 
-             (FileStream.Size <> Response.ContentLength) then
-            raise ENetworkException.Create('Downloaded file size mismatch');
-          
-          // Verify checksum if provided
-          if not ExpectedChecksum.IsEmpty then
-          begin
-            ActualChecksum := CalculateSHA256(SavePath);
-            if not SameText(ActualChecksum, ExpectedChecksum) then
-              raise ENetworkException.CreateFmt(
-                'Checksum mismatch: expected %s, got %s', 
-                [ExpectedChecksum, ActualChecksum]);
-          end;
-          
-          Result := not Cancel;
-        end
-        else
+        CleanExpected := NormalizeChecksum(ExpectedChecksum);
+        ActualChecksum := CalculateSHA256(SavePath);
+
+        if not SameText(ActualChecksum, CleanExpected) then
           raise ENetworkException.CreateFmt(
-            'HTTP error %d: %s', 
-            [Response.StatusCode, Response.StatusText]);
-        
-      except
-        on E: Exception do
-        begin
-          // Delete partial download
-          if FileExists(SavePath) then
-            DeleteFile(SavePath);
-          raise;
-        end;
+            'Checksum mismatch: expected %s, got %s',
+            [CleanExpected, ActualChecksum]);
       end;
-      
+
+      Result := not FCancelDownload;
+
     finally
       HttpClient.Free;
     end;
-  finally
-    FileStream.Free;
+  except
+    on E: Exception do
+    begin
+      Log('Download failed: ' + E.Message);
+
+      if FileExists(SavePath) then
+        SysUtils.DeleteFile(SavePath);
+
+      raise;
+    end;
   end;
+
+  FileStream.Free;
 end;
 
-function TUpdateNetworkManager.CalculateSHA256(const FileName: string): string;
+function TUpdateNetworkManager.CalculateSHA256(
+  const FileName: string): string;
 var
   FileStream: TFileStream;
 begin
-  FileStream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
+  FileStream := TFileStream.Create(
+    FileName, fmOpenRead or fmShareDenyWrite);
   try
     Result := THashSHA2.GetHashString(FileStream, SHA256);
   finally

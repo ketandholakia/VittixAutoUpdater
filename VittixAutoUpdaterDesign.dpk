@@ -1,0 +1,47 @@
+package VittixAutoUpdaterDesign;
+
+{$R *.res}
+{$IFDEF IMPLICITBUILDING This IFDEF should not be used by users}
+{$ALIGN 8}
+{$ASSERTIONS ON}
+{$BOOLEVAL OFF}
+{$DEBUGINFO OFF}
+{$EXTENDEDSYNTAX ON}
+{$IMPORTEDDATA ON}
+{$IOCHECKS ON}
+{$LOCALSYMBOLS ON}
+{$LONGSTRINGS ON}
+{$OPENSTRINGS ON}
+{$OPTIMIZATION OFF}
+{$OVERFLOWCHECKS OFF}
+{$RANGECHECKS OFF}
+{$REFERENCEINFO ON}
+{$SAFEDIVIDE OFF}
+{$STACKFRAMES ON}
+{$TYPEDADDRESS OFF}
+{$VARSTRINGCHECKS ON}
+{$WRITEABLECONST OFF}
+{$MINENUMSIZE 1}
+{$IMAGEBASE $400000}
+{$DEFINE DEBUG}
+{$ENDIF IMPLICITBUILDING}
+{$DESCRIPTION 'VittixAutoUpdater Design-Time Package'}
+{$DESIGNONLY}
+{$IMPLICITBUILD ON}
+
+requires
+  rtl,
+  vcl,
+  designide,
+  vclimg,
+  VclSmp;
+
+contains
+  VittixAutoUpdater.Types in 'VittixAutoUpdater.Types.pas',
+  VittixAutoUpdater.Engine in 'VittixAutoUpdater.Engine.pas',
+  VittixAutoUpdater.Network in 'VittixAutoUpdater.Network.pas',
+  VittixAutoUpdater.VisualComponent in 'VittixAutoUpdater.VisualComponent.pas',
+  VittixAutoUpdater.ComponentReg in 'VittixAutoUpdater.ComponentReg.pas',
+  VittixAutoUpdater.PropertyEditors in 'VittixAutoUpdater.PropertyEditors.pas';
+
+end.
