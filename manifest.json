@@ -1,0 +1,23 @@
+{
+  "MyApplication": {
+    "version": "2.1.5.100",
+    "download_url": "https://updates.example.com/releases/v2.1.5/MyApplication.zip",
+    "release_notes": "## What's New in v2.1.5\n\n- Fixed critical bug in data processing\n- Improved performance by 30%\n- Added dark mode support\n- Updated third-party libraries\n\n## Bug Fixes\n\n- Fixed crash when opening large files\n- Resolved memory leak in background service\n- Corrected timezone handling issues\n\n## Known Issues\n\n- Some users may need to restart twice on Windows 7",
+    "file_size": 15728640,
+    "checksum": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "min_version": "2.0.0.0",
+    "release_date": "2026-02-09T10:30:00Z",
+    "severity": "recommended"
+  },
+  
+  "MyApplication-Beta": {
+    "version": "2.2.0.50",
+    "download_url": "https://updates.example.com/beta/v2.2.0/MyApplication.zip",
+    "release_notes": "Beta preview of upcoming v2.2 release",
+    "file_size": 16252928,
+    "checksum": "sha256:d41d8cd98f00b204e9800998ecf8427e1234567890abcdef1234567890abcdef",
+    "min_version": "2.1.0.0",
+    "release_date": "2026-02-08T14:00:00Z",
+    "severity": "optional"
+  }
+}
