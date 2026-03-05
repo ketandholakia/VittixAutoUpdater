@@ -3,170 +3,135 @@ unit VittixAutoUpdater.VisualComponent;
 interface
 
 uses
-  System.Classes, System.SysUtils, System.Types, System.UITypes,
-  Vcl.Controls, Vcl.StdCtrls, Vcl.ComCtrls, Vcl.ExtCtrls, Vcl.Graphics,
-  Vcl.Buttons, Vcl.Forms, Vcl.Dialogs, Vcl.Imaging.pngimage,
+  System.Classes, System.SysUtils,
+  Vcl.Controls, Vcl.ExtCtrls, Vcl.StdCtrls, Vcl.ComCtrls,
+  Vcl.Forms, Vcl.Graphics,
   VittixAutoUpdater.Types, VittixAutoUpdater.Engine;
 
 type
-  TUpdateUIStyle = (uisCompact, uisStandard, uisDetailed);
-  TUpdateButtonStyle = (ubsAutomatic, ubsManual, ubsBoth);
-
-  // Events
-  TUpdateStateChangeEvent = procedure(Sender: TObject; NewState: TUpdateState;
-    const StatusMessage: string) of object;
-  TDownloadProgressEvent = procedure(Sender: TObject; BytesReceived, TotalBytes: Int64;
-    PercentComplete: Integer; var Cancel: Boolean) of object;
-  TUpdateDecisionEvent = procedure(Sender: TObject; const Manifest: TUpdateManifest;
-    var Decision: Boolean) of object;
-  TUpdateCompleteEvent = procedure(Sender: TObject; Success: Boolean;
-    const ErrorMessage: string) of object;
-
   TVittixAutoUpdaterUI = class(TCustomPanel)
   private
-    // Core components
     FEngine: TUpdateEngine;
-    FConfig: TUpdaterConfig;
     FCurrentManifest: TUpdateManifest;
-    FIsUpdating: Boolean;
-    FAutoCheck: Boolean;
-    FAutoCheckTimer: TTimer;
 
-    // UI Style and Layout
-    FUIStyle: TUpdateUIStyle;
-    FButtonStyle: TUpdateButtonStyle;
-    FShowReleaseNotes: Boolean;
-    FShowProgressDetails: Boolean;
-
-    // UI Controls
-    FMainPanel: TPanel;
+    // --- UI Controls ---
     FHeaderPanel: TPanel;
-    FContentPanel: TPanel;
-    FButtonPanel: TPanel;
-    FProgressPanel: TPanel;
-
-    // Header controls
-    FTitleLabel: TLabel;
     FStatusLabel: TLabel;
-    FVersionLabel: TLabel;
+    FStateLabel: TLabel;
 
-    // Content controls
-    FInfoMemo: TMemo;
-    FReleaseNotesMemo: TMemo;
-    FSplitter: TSplitter;
-
-    // Progress controls
     FProgressBar: TProgressBar;
-    FProgressLabel: TLabel;
-    FSpeedLabel: TLabel;
-    FETALabel: TLabel;
 
-    // Buttons
-    FCheckButton: TButton;
-    FDownloadButton: TButton;
-    FInstallButton: TButton;
-    FCancelButton: TButton;
-    FSettingsButton: TSpeedButton;
+    FNotesPanel: TPanel;
+    FNotesMemo: TMemo;
 
-    // Progress tracking
-    FStartTime: TDateTime;
-    FLastBytes: Int64;
-    FLastTime: TDateTime;
+    FButtonPanel: TPanel;
+    FBtnCheck: TButton;
+    FBtnDownload: TButton;
+    FBtnInstall: TButton;
+    FBtnCancel: TButton;
 
-    // Events
-    FOnStateChange: TUpdateStateChangeEvent;
-    FOnDownloadProgress: TDownloadProgressEvent;
-    FOnUpdateDecision: TUpdateDecisionEvent;
-    FOnUpdateComplete: TUpdateCompleteEvent;
-    FOnSettingsClick: TNotifyEvent;
+    // ===== Design-time property accessors =====
+    function GetAppName: string;
+    procedure SetAppName(const Value: string);
 
-    // Property setters
-    procedure SetUIStyle(const Value: TUpdateUIStyle);
-    procedure SetButtonStyle(const Value: TUpdateButtonStyle);
-    procedure SetShowReleaseNotes(const Value: Boolean);
-    procedure SetShowProgressDetails(const Value: Boolean);
-    procedure SetAutoCheck(const Value: Boolean);
+    function GetManifestUrls: TArray<string>;
+    procedure SetManifestUrls(const Value: TArray<string>);
+
+    function GetConnectionTimeout: Integer;
+    procedure SetConnectionTimeout(Value: Integer);
+
+    function GetMaxRetries: Integer;
+    procedure SetMaxRetries(Value: Integer);
+
+    function GetTempFolder: string;
+    procedure SetTempFolder(const Value: string);
+
+    function GetCheckInterval: Integer;
+    procedure SetCheckInterval(Value: Integer);
+
+    function GetAutoDownload: Boolean;
+    procedure SetAutoDownload(Value: Boolean);
+
+    function GetAutoInstall: Boolean;
+    procedure SetAutoInstall(Value: Boolean);
+
+    function GetAllowDowngrade: Boolean;
+    procedure SetAllowDowngrade(Value: Boolean);
+
+    function GetConfig: TUpdaterConfig;
     procedure SetConfig(const Value: TUpdaterConfig);
 
-    // UI Creation and Layout
-    procedure CreateUI;
-    procedure LayoutControls;
-    procedure UpdateButtonStates;
-    procedure ApplyUIStyle;
-
-    // Event handlers
-    procedure OnEngineStateChange(Sender: TObject; NewState: TUpdateState;
+    // Engine event handlers
+    procedure OnStateChangeHandler(
+      Sender: TObject;
+      NewState: TUpdateState;
       const Status: string);
-    procedure OnEngineDownloadProgress(Sender: TObject; BytesReceived, TotalBytes: Int64;
+
+    procedure OnDownloadProgressHandler(
+      Sender: TObject;
+      BytesReceived, TotalBytes: Int64;
       var Cancel: Boolean);
-    procedure OnAutoCheckTimer(Sender: TObject);
 
-    // Button click handlers
-    procedure OnCheckButtonClick(Sender: TObject);
-    procedure OnDownloadButtonClick(Sender: TObject);
-    procedure OnInstallButtonClick(Sender: TObject);
-    procedure OnCancelButtonClick(Sender: TObject);
-    procedure OnSettingsButtonClick(Sender: TObject);
+    // Button handlers
+    procedure DoCheckClick(Sender: TObject);
+    procedure DoDownloadClick(Sender: TObject);
+    procedure DoInstallClick(Sender: TObject);
+    procedure DoCancelClick(Sender: TObject);
 
-    // Utility methods
-    function FormatBytes(Bytes: Int64): string;
-    function FormatSpeed(BytesPerSecond: Int64): string;
-    function FormatTime(Seconds: Integer): string;
-    procedure UpdateProgressDetails(BytesReceived, TotalBytes: Int64);
-    procedure ShowUpdateInfo(const Manifest: TUpdateManifest);
-    procedure ResetUI;
+    procedure UpdateButtons;
 
   protected
+    procedure Loaded; override;
     procedure Resize; override;
-    procedure Paint; override;
 
   public
     constructor Create(AOwner: TComponent); override;
     destructor Destroy; override;
 
-    // Public methods
     procedure CheckForUpdates;
     procedure DownloadUpdate;
     procedure InstallUpdate;
-    procedure CancelOperation;
-    procedure ResetToInitialState;
+    procedure CancelUpdate;
 
-    // Properties (read-only)
     property Engine: TUpdateEngine read FEngine;
-    property IsUpdating: Boolean read FIsUpdating;
-    property CurrentManifest: TUpdateManifest read FCurrentManifest;
+    property Manifest: TUpdateManifest read FCurrentManifest;
 
   published
-    // Inherited properties
     property Align;
     property Anchors;
-    property Color default clBtnFace;
-    property Constraints;
-    property Enabled;
-    property Font;
-    property ParentColor default False;
-    property ParentFont;
-    property ParentShowHint;
-    property PopupMenu;
-    property ShowHint;
-    property TabOrder;
-    property TabStop default True;
-    property Visible;
+    property Color;
 
-    // Custom properties
-    property Config: TUpdaterConfig read FConfig write SetConfig;
-    property UIStyle: TUpdateUIStyle read FUIStyle write SetUIStyle default uisStandard;
-    property ButtonStyle: TUpdateButtonStyle read FButtonStyle write SetButtonStyle default ubsBoth;
-    property ShowReleaseNotes: Boolean read FShowReleaseNotes write SetShowReleaseNotes default True;
-    property ShowProgressDetails: Boolean read FShowProgressDetails write SetShowProgressDetails default True;
-    property AutoCheck: Boolean read FAutoCheck write SetAutoCheck default False;
+    // ===== FULL DESIGN-TIME SETTINGS =====
+    property AppName: string
+      read GetAppName write SetAppName;
 
-    // Events
-    property OnStateChange: TUpdateStateChangeEvent read FOnStateChange write FOnStateChange;
-    property OnDownloadProgress: TDownloadProgressEvent read FOnDownloadProgress write FOnDownloadProgress;
-    property OnUpdateDecision: TUpdateDecisionEvent read FOnUpdateDecision write FOnUpdateDecision;
-    property OnUpdateComplete: TUpdateCompleteEvent read FOnUpdateComplete write FOnUpdateComplete;
-    property OnSettingsClick: TNotifyEvent read FOnSettingsClick write FOnSettingsClick;
+    property ManifestUrls: TArray<string>
+      read GetManifestUrls write SetManifestUrls;
+
+    property ConnectionTimeout: Integer
+      read GetConnectionTimeout write SetConnectionTimeout;
+
+    property MaxRetries: Integer
+      read GetMaxRetries write SetMaxRetries;
+
+    property TempFolder: string
+      read GetTempFolder write SetTempFolder;
+
+    property CheckInterval: Integer
+      read GetCheckInterval write SetCheckInterval;
+
+    property AutoDownload: Boolean
+      read GetAutoDownload write SetAutoDownload;
+
+    property AutoInstall: Boolean
+      read GetAutoInstall write SetAutoInstall;
+
+    property AllowDowngrade: Boolean
+      read GetAllowDowngrade write SetAllowDowngrade;
+
+    // Keep full config if needed
+    property Config: TUpdaterConfig
+      read GetConfig write SetConfig;
   end;
 
 procedure Register;
@@ -174,7 +139,7 @@ procedure Register;
 implementation
 
 uses
-  System.DateUtils, System.Math, Vcl.Themes;
+  System.TypInfo;
 
 { TVittixAutoUpdaterUI }
 
@@ -182,40 +147,93 @@ constructor TVittixAutoUpdaterUI.Create(AOwner: TComponent);
 begin
   inherited Create(AOwner);
 
-  // Initialize properties
-  Width := 500;
-  Height := 350;
-  Color := clBtnFace;
-  ParentColor := False;
-  TabStop := True;
-  BevelOuter := bvNone;
+  Width  := 480;
+  Height := 320;
+  BevelOuter := bvLowered;
+  ControlStyle := ControlStyle + [csOpaque];
 
-  // Initialize private fields
-  FUIStyle := uisStandard;
-  FButtonStyle := ubsBoth;
-  FShowReleaseNotes := True;
-  FShowProgressDetails := True;
-  FAutoCheck := False;
-  FIsUpdating := False;
+  // ================= HEADER =================
+  FHeaderPanel := TPanel.Create(Self);
+  FHeaderPanel.Parent := Self;
+  FHeaderPanel.Align := alTop;
+  FHeaderPanel.Height := 60;
+  FHeaderPanel.BevelOuter := bvNone;
 
-  // Create default config
-  FConfig := TUpdaterConfig.Default;
+  FStatusLabel := TLabel.Create(Self);
+  FStatusLabel.Parent := FHeaderPanel;
+  FStatusLabel.Align := alTop;
+  FStatusLabel.Caption := 'Updater Ready';
+  FStatusLabel.Font.Size := 12;
+  FStatusLabel.Font.Style := [fsBold];
 
-  // Create engine
-  FEngine := TUpdateEngine.Create(FConfig);
-  FEngine.OnStateChange := OnEngineStateChange;
-  FEngine.OnDownloadProgress := OnEngineDownloadProgress;
+  FStateLabel := TLabel.Create(Self);
+  FStateLabel.Parent := FHeaderPanel;
+  FStateLabel.Align := alBottom;
+  FStateLabel.Caption := 'Idle';
+  FStateLabel.Font.Color := clGray;
 
-  // Create auto-check timer
-  FAutoCheckTimer := TTimer.Create(Self);
-  FAutoCheckTimer.Enabled := False;
-  FAutoCheckTimer.OnTimer := OnAutoCheckTimer;
+  // ================= PROGRESS =================
+  FProgressBar := TProgressBar.Create(Self);
+  FProgressBar.Parent := Self;
+  FProgressBar.Align := alBottom;
+  FProgressBar.Min := 0;
+  FProgressBar.Max := 100;
+  FProgressBar.Height := 24;
 
-  // Create UI
-  CreateUI;
-  LayoutControls;
-  UpdateButtonStates;
-  ResetUI;
+  // ================= RELEASE NOTES =================
+  FNotesPanel := TPanel.Create(Self);
+  FNotesPanel.Parent := Self;
+  FNotesPanel.Align := alClient;
+  FNotesPanel.Caption := 'Release Notes';
+  FNotesPanel.BevelOuter := bvLowered;
+
+  FNotesMemo := TMemo.Create(Self);
+  FNotesMemo.Parent := FNotesPanel;
+  FNotesMemo.Align := alClient;
+  FNotesMemo.ReadOnly := True;
+  FNotesMemo.ScrollBars := ssVertical;
+
+  // ================= BUTTONS =================
+  FButtonPanel := TPanel.Create(Self);
+  FButtonPanel.Parent := Self;
+  FButtonPanel.Align := alBottom;
+  FButtonPanel.Height := 40;
+  FButtonPanel.BevelOuter := bvNone;
+
+  FBtnCheck := TButton.Create(Self);
+  FBtnCheck.Parent := FButtonPanel;
+  FBtnCheck.Caption := 'Check';
+  FBtnCheck.Left := 10;
+  FBtnCheck.Top := 8;
+  FBtnCheck.OnClick := DoCheckClick;
+
+  FBtnDownload := TButton.Create(Self);
+  FBtnDownload.Parent := FButtonPanel;
+  FBtnDownload.Caption := 'Download';
+  FBtnDownload.Left := 100;
+  FBtnDownload.Top := 8;
+  FBtnDownload.OnClick := DoDownloadClick;
+
+  FBtnInstall := TButton.Create(Self);
+  FBtnInstall.Parent := FButtonPanel;
+  FBtnInstall.Caption := 'Install';
+  FBtnInstall.Left := 200;
+  FBtnInstall.Top := 8;
+  FBtnInstall.OnClick := DoInstallClick;
+
+  FBtnCancel := TButton.Create(Self);
+  FBtnCancel.Parent := FButtonPanel;
+  FBtnCancel.Caption := 'Cancel';
+  FBtnCancel.Left := 300;
+  FBtnCancel.Top := 8;
+  FBtnCancel.OnClick := DoCancelClick;
+
+  // ================= ENGINE =================
+  FEngine := TUpdateEngine.Create(TUpdaterConfig.Default);
+  FEngine.OnStateChange := OnStateChangeHandler;
+  FEngine.OnDownloadProgress := OnDownloadProgressHandler;
+
+  UpdateButtons;
 end;
 
 destructor TVittixAutoUpdaterUI.Destroy;
@@ -224,748 +242,266 @@ begin
   inherited;
 end;
 
-procedure TVittixAutoUpdaterUI.CreateUI;
+procedure TVittixAutoUpdaterUI.Loaded;
 begin
-  // Main panel
-  FMainPanel := TPanel.Create(Self);
-  FMainPanel.Parent := Self;
-  FMainPanel.BevelOuter := bvNone;
-  FMainPanel.Color := Color;
-  FMainPanel.ParentColor := False;
-
-  // Header panel
-  FHeaderPanel := TPanel.Create(Self);
-  FHeaderPanel.Parent := FMainPanel;
-  FHeaderPanel.BevelOuter := bvNone;
-  FHeaderPanel.Color := clWindow;
-  FHeaderPanel.ParentColor := False;
-  FHeaderPanel.Height := 60;
-
-  // Content panel
-  FContentPanel := TPanel.Create(Self);
-  FContentPanel.Parent := FMainPanel;
-  FContentPanel.BevelOuter := bvNone;
-  FContentPanel.Color := Color;
-  FContentPanel.ParentColor := False;
-
-  // Button panel
-  FButtonPanel := TPanel.Create(Self);
-  FButtonPanel.Parent := FMainPanel;
-  FButtonPanel.BevelOuter := bvNone;
-  FButtonPanel.Color := Color;
-  FButtonPanel.ParentColor := False;
-  FButtonPanel.Height := 45;
-
-  // Progress panel
-  FProgressPanel := TPanel.Create(Self);
-  FProgressPanel.Parent := FMainPanel;
-  FProgressPanel.BevelOuter := bvNone;
-  FProgressPanel.Color := Color;
-  FProgressPanel.ParentColor := False;
-  FProgressPanel.Height := 60;
-
-  // Header controls
-  FTitleLabel := TLabel.Create(Self);
-  FTitleLabel.Parent := FHeaderPanel;
-  FTitleLabel.Caption := 'Application Updater';
-  FTitleLabel.Font.Style := [fsBold];
-  FTitleLabel.Font.Size := 12;
-
-  FStatusLabel := TLabel.Create(Self);
-  FStatusLabel.Parent := FHeaderPanel;
-  FStatusLabel.Caption := 'Ready to check for updates';
-
-  FVersionLabel := TLabel.Create(Self);
-  FVersionLabel.Parent := FHeaderPanel;
-  FVersionLabel.Caption := 'Current version: Unknown';
-  FVersionLabel.Font.Size := 8;
-
-  // Content controls
-  FInfoMemo := TMemo.Create(Self);
-  FInfoMemo.Parent := FContentPanel;
-  FInfoMemo.ReadOnly := True;
-  FInfoMemo.ScrollBars := ssVertical;
-  FInfoMemo.Lines.Clear;
-
-  FReleaseNotesMemo := TMemo.Create(Self);
-  FReleaseNotesMemo.Parent := FContentPanel;
-  FReleaseNotesMemo.ReadOnly := True;
-  FReleaseNotesMemo.ScrollBars := ssVertical;
-  FReleaseNotesMemo.Lines.Clear;
-
-  FSplitter := TSplitter.Create(Self);
-  FSplitter.Parent := FContentPanel;
-  FSplitter.Align := alRight;
-  FSplitter.Width := 4;
-
-  // Progress controls
-  FProgressBar := TProgressBar.Create(Self);
-  FProgressBar.Parent := FProgressPanel;
-  FProgressBar.Min := 0;
-  FProgressBar.Max := 100;
-
-  FProgressLabel := TLabel.Create(Self);
-  FProgressLabel.Parent := FProgressPanel;
-  FProgressLabel.Caption := '';
-
-  FSpeedLabel := TLabel.Create(Self);
-  FSpeedLabel.Parent := FProgressPanel;
-  FSpeedLabel.Caption := '';
-
-  FETALabel := TLabel.Create(Self);
-  FETALabel.Parent := FProgressPanel;
-  FETALabel.Caption := '';
-
-  // Buttons
-  FCheckButton := TButton.Create(Self);
-  FCheckButton.Parent := FButtonPanel;
-  FCheckButton.Caption := 'Check for Updates';
-  FCheckButton.OnClick := OnCheckButtonClick;
-
-  FDownloadButton := TButton.Create(Self);
-  FDownloadButton.Parent := FButtonPanel;
-  FDownloadButton.Caption := 'Download';
-  FDownloadButton.OnClick := OnDownloadButtonClick;
-  FDownloadButton.Enabled := False;
-
-  FInstallButton := TButton.Create(Self);
-  FInstallButton.Parent := FButtonPanel;
-  FInstallButton.Caption := 'Install';
-  FInstallButton.OnClick := OnInstallButtonClick;
-  FInstallButton.Enabled := False;
-
-  FCancelButton := TButton.Create(Self);
-  FCancelButton.Parent := FButtonPanel;
-  FCancelButton.Caption := 'Cancel';
-  FCancelButton.OnClick := OnCancelButtonClick;
-  FCancelButton.Enabled := False;
-
-  FSettingsButton := TSpeedButton.Create(Self);
-  FSettingsButton.Parent := FButtonPanel;
-  FSettingsButton.Caption := '⚙';
-  FSettingsButton.OnClick := OnSettingsButtonClick;
-  FSettingsButton.Hint := 'Settings';
-  FSettingsButton.ShowHint := True;
-end;
-
-procedure TVittixAutoUpdaterUI.LayoutControls;
-begin
-  // Main panel fills the entire component
-  FMainPanel.Align := alClient;
-
-  // Header at top
-  FHeaderPanel.Align := alTop;
-
-  // Progress panel at bottom (initially hidden)
-  FProgressPanel.Align := alBottom;
-  FProgressPanel.Visible := False;
-
-  // Button panel above progress
-  FButtonPanel.Align := alBottom;
-
-  // Content fills the middle
-  FContentPanel.Align := alClient;
-
-  // Position header labels
-  FTitleLabel.Left := 10;
-  FTitleLabel.Top := 8;
-
-  FStatusLabel.Left := 10;
-  FStatusLabel.Top := 28;
-
-  FVersionLabel.Left := 10;
-  FVersionLabel.Top := 44;
-
-  // Position content controls
-  FInfoMemo.Align := alClient;
-  FReleaseNotesMemo.Width := 200;
-  FReleaseNotesMemo.Align := alRight;
-
-  // Position progress controls
-  FProgressBar.Left := 10;
-  FProgressBar.Top := 10;
-  FProgressBar.Width := Width - 20;
-  FProgressBar.Height := 17;
-  FProgressBar.Anchors := [akLeft, akTop, akRight];
-
-  FProgressLabel.Left := 10;
-  FProgressLabel.Top := 32;
-
-  FSpeedLabel.Left := 150;
-  FSpeedLabel.Top := 32;
-
-  FETALabel.Left := 300;
-  FETALabel.Top := 32;
-
-  // Position buttons
-  FSettingsButton.Left := Width - 35;
-  FSettingsButton.Top := 10;
-  FSettingsButton.Width := 25;
-  FSettingsButton.Height := 25;
-  FSettingsButton.Anchors := [akTop, akRight];
-
-  FCancelButton.Left := Width - 85;
-  FCancelButton.Top := 10;
-  FCancelButton.Width := 75;
-  FCancelButton.Anchors := [akTop, akRight];
-
-  FInstallButton.Left := Width - 170;
-  FInstallButton.Top := 10;
-  FInstallButton.Width := 75;
-  FInstallButton.Anchors := [akTop, akRight];
-
-  FDownloadButton.Left := Width - 255;
-  FDownloadButton.Top := 10;
-  FDownloadButton.Width := 75;
-  FDownloadButton.Anchors := [akTop, akRight];
-
-  FCheckButton.Left := 10;
-  FCheckButton.Top := 10;
-  FCheckButton.Width := 100;
+  inherited Loaded;
 end;
 
 procedure TVittixAutoUpdaterUI.Resize;
 begin
   inherited;
-  if Assigned(FMainPanel) then
-    LayoutControls;
 end;
 
-procedure TVittixAutoUpdaterUI.Paint;
+// ======== DESIGN-TIME PROPERTY METHODS ========
+
+function TVittixAutoUpdaterUI.GetConfig: TUpdaterConfig;
+begin
+  Result := FEngine.Config;
+end;
+
+procedure TVittixAutoUpdaterUI.SetConfig(const Value: TUpdaterConfig);
+begin
+  FEngine.Config := Value;
+end;
+
+function TVittixAutoUpdaterUI.GetAppName: string;
+begin
+  Result := FEngine.Config.AppName;
+end;
+
+procedure TVittixAutoUpdaterUI.SetAppName(const Value: string);
 var
-  R: TRect;
+  C: TUpdaterConfig;
 begin
-  inherited;
-
-  // Draw border if themed
-  if StyleServices.Enabled then
-  begin
-    R := ClientRect;
-    Canvas.Pen.Color := StyleServices.GetStyleColor(scBorder);
-    Canvas.Brush.Style := bsClear;
-    Canvas.Rectangle(R);
-  end;
+  C := FEngine.Config;
+  C.AppName := Value;
+  FEngine.Config := C;
 end;
 
-procedure TVittixAutoUpdaterUI.ApplyUIStyle;
+function TVittixAutoUpdaterUI.GetManifestUrls: TArray<string>;
 begin
-  case FUIStyle of
-    uisCompact:
-    begin
-      Height := 200;
-      FHeaderPanel.Height := 40;
-      FButtonPanel.Height := 35;
-      FProgressPanel.Height := 45;
-      FShowReleaseNotes := False;
-      FReleaseNotesMemo.Visible := False;
-      FSplitter.Visible := False;
-    end;
-
-    uisStandard:
-    begin
-      Height := 350;
-      FHeaderPanel.Height := 60;
-      FButtonPanel.Height := 45;
-      FProgressPanel.Height := 60;
-      FReleaseNotesMemo.Visible := FShowReleaseNotes;
-      FSplitter.Visible := FShowReleaseNotes;
-    end;
-
-    uisDetailed:
-    begin
-      Height := 450;
-      FHeaderPanel.Height := 80;
-      FButtonPanel.Height := 50;
-      FProgressPanel.Height := 80;
-      FReleaseNotesMemo.Visible := True;
-      FSplitter.Visible := True;
-    end;
-  end;
-
-  UpdateButtonStates;
-  LayoutControls;
+  Result := FEngine.Config.ManifestUrls;
 end;
 
-procedure TVittixAutoUpdaterUI.UpdateButtonStates;
+procedure TVittixAutoUpdaterUI.SetManifestUrls(const Value: TArray<string>);
 var
-  State: TUpdateState;
+  C: TUpdaterConfig;
 begin
-  if not Assigned(FEngine) then
-    Exit;
-
-  State := FEngine.State;
-
-  // Update button visibility based on style
-  case FButtonStyle of
-    ubsAutomatic:
-    begin
-      FCheckButton.Visible := True;
-      FDownloadButton.Visible := False;
-      FInstallButton.Visible := False;
-    end;
-
-    ubsManual:
-    begin
-      FCheckButton.Visible := True;
-      FDownloadButton.Visible := True;
-      FInstallButton.Visible := True;
-    end;
-
-    ubsBoth:
-    begin
-      FCheckButton.Visible := True;
-      FDownloadButton.Visible := True;
-      FInstallButton.Visible := True;
-    end;
-  end;
-
-  // Update button states based on current state
-  case State of
-    usIdle:
-    begin
-      FCheckButton.Enabled := True;
-      FDownloadButton.Enabled := False;
-      FInstallButton.Enabled := False;
-      FCancelButton.Enabled := False;
-    end;
-
-    usChecking:
-    begin
-      FCheckButton.Enabled := False;
-      FDownloadButton.Enabled := False;
-      FInstallButton.Enabled := False;
-      FCancelButton.Enabled := True;
-    end;
-
-    usAvailable:
-    begin
-      FCheckButton.Enabled := True;
-      FDownloadButton.Enabled := True;
-      FInstallButton.Enabled := False;
-      FCancelButton.Enabled := False;
-    end;
-
-    usDownloading:
-    begin
-      FCheckButton.Enabled := False;
-      FDownloadButton.Enabled := False;
-      FInstallButton.Enabled := False;
-      FCancelButton.Enabled := True;
-    end;
-
-    usReady:
-    begin
-      FCheckButton.Enabled := True;
-      FDownloadButton.Enabled := False;
-      FInstallButton.Enabled := True;
-      FCancelButton.Enabled := False;
-    end;
-
-    usApplying:
-    begin
-      FCheckButton.Enabled := False;
-      FDownloadButton.Enabled := False;
-      FInstallButton.Enabled := False;
-      FCancelButton.Enabled := False;
-    end;
-  end;
-
-  FProgressPanel.Visible := State in [usDownloading, usApplying];
+  C := FEngine.Config;
+  C.ManifestUrls := Value;
+  FEngine.Config := C;
 end;
 
-// Event Handlers
+function TVittixAutoUpdaterUI.GetConnectionTimeout: Integer;
+begin
+  Result := FEngine.Config.ConnectionTimeout;
+end;
 
-procedure TVittixAutoUpdaterUI.OnEngineStateChange(Sender: TObject;
-  NewState: TUpdateState; const Status: string);
+procedure TVittixAutoUpdaterUI.SetConnectionTimeout(Value: Integer);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.ConnectionTimeout := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetMaxRetries: Integer;
+begin
+  Result := FEngine.Config.MaxRetries;
+end;
+
+procedure TVittixAutoUpdaterUI.SetMaxRetries(Value: Integer);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.MaxRetries := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetTempFolder: string;
+begin
+  Result := FEngine.Config.TempFolder;
+end;
+
+procedure TVittixAutoUpdaterUI.SetTempFolder(const Value: string);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.TempFolder := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetCheckInterval: Integer;
+begin
+  Result := FEngine.Config.CheckInterval;
+end;
+
+procedure TVittixAutoUpdaterUI.SetCheckInterval(Value: Integer);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.CheckInterval := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetAutoDownload: Boolean;
+begin
+  Result := FEngine.Config.AutoDownload;
+end;
+
+procedure TVittixAutoUpdaterUI.SetAutoDownload(Value: Boolean);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.AutoDownload := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetAutoInstall: Boolean;
+begin
+  Result := FEngine.Config.AutoInstall;
+end;
+
+procedure TVittixAutoUpdaterUI.SetAutoInstall(Value: Boolean);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.AutoInstall := Value;
+  FEngine.Config := C;
+end;
+
+function TVittixAutoUpdaterUI.GetAllowDowngrade: Boolean;
+begin
+  Result := FEngine.Config.AllowDowngrade;
+end;
+
+procedure TVittixAutoUpdaterUI.SetAllowDowngrade(Value: Boolean);
+var
+  C: TUpdaterConfig;
+begin
+  C := FEngine.Config;
+  C.AllowDowngrade := Value;
+  FEngine.Config := C;
+end;
+
+// ======== ENGINE EVENT HANDLERS ========
+
+procedure TVittixAutoUpdaterUI.OnStateChangeHandler(
+  Sender: TObject;
+  NewState: TUpdateState;
+  const Status: string);
 begin
   FStatusLabel.Caption := Status;
-  UpdateButtonStates;
+  FStateLabel.Caption := GetEnumName(TypeInfo(TUpdateState), Ord(NewState));
 
   case NewState of
+    usDownloading:
+      FProgressBar.Position := 0;
+
     usAvailable:
-    begin
-      ShowUpdateInfo(FEngine.LastManifest);
-      FCurrentManifest := FEngine.LastManifest;
-    end;
+      FNotesMemo.Lines.Text := FCurrentManifest.ReleaseNotes;
 
     usComplete:
-    begin
       FProgressBar.Position := 100;
-      FIsUpdating := False;
-    end;
-
-    usFailed:
-    begin
-      FIsUpdating := False;
-      FProgressPanel.Visible := False;
-    end;
   end;
 
-  // Trigger custom event
-  if Assigned(FOnStateChange) then
-    FOnStateChange(Self, NewState, Status);
+  UpdateButtons;
 end;
 
-procedure TVittixAutoUpdaterUI.OnEngineDownloadProgress(Sender: TObject;
-  BytesReceived, TotalBytes: Int64; var Cancel: Boolean);
-var
-  PercentComplete: Integer;
+procedure TVittixAutoUpdaterUI.OnDownloadProgressHandler(
+  Sender: TObject;
+  BytesReceived, TotalBytes: Int64;
+  var Cancel: Boolean);
 begin
   if TotalBytes > 0 then
-  begin
-    PercentComplete := Round((BytesReceived / TotalBytes) * 100);
-    FProgressBar.Position := PercentComplete;
-
-    if FShowProgressDetails then
-      UpdateProgressDetails(BytesReceived, TotalBytes);
-
-    // Trigger custom event
-    if Assigned(FOnDownloadProgress) then
-      FOnDownloadProgress(Self, BytesReceived, TotalBytes, PercentComplete, Cancel);
-  end;
+    FProgressBar.Position :=
+      Round((BytesReceived / TotalBytes) * 100);
 end;
 
-procedure TVittixAutoUpdaterUI.OnAutoCheckTimer(Sender: TObject);
+// ======== BUTTON LOGIC ========
+
+procedure TVittixAutoUpdaterUI.UpdateButtons;
 begin
-  if not FIsUpdating and (FEngine.State = usIdle) then
-    CheckForUpdates;
+  FBtnCheck.Enabled :=
+    (FEngine.State = usIdle) or (FEngine.State = usFailed);
+
+  FBtnDownload.Enabled :=
+    (FEngine.State = usAvailable);
+
+  FBtnInstall.Enabled :=
+    (FEngine.State = usVerifying);
+
+  FBtnCancel.Enabled :=
+    (FEngine.State in [usChecking, usDownloading]);
 end;
 
-// Button Click Handlers
-
-procedure TVittixAutoUpdaterUI.OnCheckButtonClick(Sender: TObject);
+procedure TVittixAutoUpdaterUI.DoCheckClick(Sender: TObject);
 begin
   CheckForUpdates;
 end;
 
-procedure TVittixAutoUpdaterUI.OnDownloadButtonClick(Sender: TObject);
+procedure TVittixAutoUpdaterUI.DoDownloadClick(Sender: TObject);
 begin
   DownloadUpdate;
 end;
 
-procedure TVittixAutoUpdaterUI.OnInstallButtonClick(Sender: TObject);
+procedure TVittixAutoUpdaterUI.DoInstallClick(Sender: TObject);
 begin
   InstallUpdate;
 end;
 
-procedure TVittixAutoUpdaterUI.OnCancelButtonClick(Sender: TObject);
+procedure TVittixAutoUpdaterUI.DoCancelClick(Sender: TObject);
 begin
-  CancelOperation;
+  CancelUpdate;
 end;
 
-procedure TVittixAutoUpdaterUI.OnSettingsButtonClick(Sender: TObject);
-begin
-  if Assigned(FOnSettingsClick) then
-    FOnSettingsClick(Self);
-end;
-
-// Public Methods
+// ======== PUBLIC METHODS ========
 
 procedure TVittixAutoUpdaterUI.CheckForUpdates;
 begin
-  if FIsUpdating then
-    Exit;
-
-  FIsUpdating := True;
-  ResetUI;
-
   FEngine.CheckForUpdate(
-    procedure(Result: TUpdateCheckResult; const Manifest: TUpdateManifest;
-      const ErrorMsg: string)
+    procedure(Result: TUpdateCheckResult;
+      const Manifest: TUpdateManifest; const ErrorMsg: string)
     begin
-      FIsUpdating := False;
+      FCurrentManifest := Manifest;
 
       case Result of
         ucrUpdateAvailable:
-        begin
-          FCurrentManifest := Manifest;
-
-          // Ask user if they want to proceed (if event handler assigned)
-          if Assigned(FOnUpdateDecision) then
-          begin
-            var Decision: Boolean := True;
-            FOnUpdateDecision(Self, Manifest, Decision);
-            if Decision and (FButtonStyle = ubsAutomatic) then
-              DownloadUpdate;
-          end
-          else if FButtonStyle = ubsAutomatic then
-            DownloadUpdate;
-        end;
-
+          FNotesMemo.Lines.Text := Manifest.ReleaseNotes;
         ucrNoUpdateAvailable:
-          FStatusLabel.Caption := 'Application is up to date';
-
+          FNotesMemo.Lines.Text := 'Your application is up to date.';
         ucrError:
-          FStatusLabel.Caption := 'Error: ' + ErrorMsg;
+          FNotesMemo.Lines.Text := 'Error: ' + ErrorMsg;
       end;
     end);
 end;
 
 procedure TVittixAutoUpdaterUI.DownloadUpdate;
 begin
-  if FIsUpdating or (FEngine.State <> usAvailable) then
-    Exit;
-
-  FIsUpdating := True;
-  FStartTime := Now;
-  FLastBytes := 0;
-  FLastTime := Now;
-
-  TThread.CreateAnonymousThread(
-    procedure
-    begin
-      var Success := FEngine.DownloadUpdate(FCurrentManifest);
-
-      TThread.Synchronize(nil,
-        procedure
-        begin
-          FIsUpdating := False;
-          if Success then
-          begin
-            if FButtonStyle = ubsAutomatic then
-              InstallUpdate;
-          end
-          else
-          begin
-            if Assigned(FOnUpdateComplete) then
-              FOnUpdateComplete(Self, False, 'Download failed');
-          end;
-        end);
-    end).Start;
+  if FEngine.State = usAvailable then
+    FEngine.DownloadUpdate(FCurrentManifest);
 end;
 
 procedure TVittixAutoUpdaterUI.InstallUpdate;
 begin
-  if FIsUpdating or (FEngine.State <> usReady) then
-    Exit;
-
-  FIsUpdating := True;
-
-  TThread.CreateAnonymousThread(
-    procedure
-    begin
-      var Success := FEngine.ApplyUpdate;
-
-      TThread.Synchronize(nil,
-        procedure
-        begin
-          FIsUpdating := False;
-          if Assigned(FOnUpdateComplete) then
-          begin
-            if Success then
-              FOnUpdateComplete(Self, Success, 'Update completed successfully')
-            else
-              FOnUpdateComplete(Self, Success, 'Update failed');
-          end;
-        end);
-    end).Start;
+  if FEngine.State in [usVerifying, usDownloading] then
+    FEngine.ApplyUpdate;
 end;
 
-procedure TVittixAutoUpdaterUI.CancelOperation;
+procedure TVittixAutoUpdaterUI.CancelUpdate;
 begin
   FEngine.Cancel;
-  FIsUpdating := False;
-  ResetUI;
-end;
-
-procedure TVittixAutoUpdaterUI.ResetToInitialState;
-begin
-  FIsUpdating := False;
-  ResetUI;
-  FEngine.Reset;
-end;
-
-// Utility Methods
-
-procedure TVittixAutoUpdaterUI.ShowUpdateInfo(const Manifest: TUpdateManifest);
-begin
-  FInfoMemo.Lines.Clear;
-  FInfoMemo.Lines.Add('Update Available');
-  FInfoMemo.Lines.Add('');
-  FInfoMemo.Lines.Add('New Version: ' + Manifest.Version.ToString);
-  FInfoMemo.Lines.Add('Current Version: ' + FEngine.CurrentVersion.ToString);
-  FInfoMemo.Lines.Add('');
-  FInfoMemo.Lines.Add('File Size: ' + FormatBytes(Manifest.FileSize));
-  if Manifest.Checksum <> '' then
-    FInfoMemo.Lines.Add('Checksum: ' + Copy(Manifest.Checksum, 1, 16) + '...');
-  FInfoMemo.Lines.Add('');
-
-  if FShowReleaseNotes and (Manifest.ReleaseNotes <> '') then
-  begin
-    FReleaseNotesMemo.Lines.Clear;
-    FReleaseNotesMemo.Lines.Add('Release Notes:');
-    FReleaseNotesMemo.Lines.Add('');
-    FReleaseNotesMemo.Lines.Add(Manifest.ReleaseNotes);
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.UpdateProgressDetails(BytesReceived, TotalBytes: Int64);
-var
-  CurrentTime: TDateTime;
-  ElapsedSeconds: Double;
-  Speed: Int64;
-  RemainingBytes: Int64;
-  ETASeconds: Integer;
-begin
-  CurrentTime := Now;
-  ElapsedSeconds := SecondsBetween(CurrentTime, FLastTime);
-
-  if ElapsedSeconds >= 1.0 then
-  begin
-    Speed := Round((BytesReceived - FLastBytes) / ElapsedSeconds);
-
-    FProgressLabel.Caption := Format('%s of %s',
-      [FormatBytes(BytesReceived), FormatBytes(TotalBytes)]);
-    FSpeedLabel.Caption := FormatSpeed(Speed);
-
-    if Speed > 0 then
-    begin
-      RemainingBytes := TotalBytes - BytesReceived;
-      ETASeconds := Round(RemainingBytes / Speed);
-      FETALabel.Caption := 'ETA: ' + FormatTime(ETASeconds);
-    end;
-
-    FLastBytes := BytesReceived;
-    FLastTime := CurrentTime;
-  end;
-end;
-
-function TVittixAutoUpdaterUI.FormatBytes(Bytes: Int64): string;
-begin
-  if Bytes < 1024 then
-    Result := Format('%d B', [Bytes])
-  else if Bytes < 1024 * 1024 then
-    Result := Format('%.1f KB', [Bytes / 1024])
-  else if Bytes < 1024 * 1024 * 1024 then
-    Result := Format('%.1f MB', [Bytes / (1024 * 1024)])
-  else
-    Result := Format('%.2f GB', [Bytes / (1024 * 1024 * 1024)]);
-end;
-
-function TVittixAutoUpdaterUI.FormatSpeed(BytesPerSecond: Int64): string;
-begin
-  Result := FormatBytes(BytesPerSecond) + '/s';
-end;
-
-function TVittixAutoUpdaterUI.FormatTime(Seconds: Integer): string;
-var
-  Hours, Minutes, Secs: Integer;
-begin
-  if Seconds < 60 then
-    Result := Format('%ds', [Seconds])
-  else if Seconds < 3600 then
-  begin
-    Minutes := Seconds div 60;
-    Secs := Seconds mod 60;
-    Result := Format('%dm %ds', [Minutes, Secs]);
-  end
-  else
-  begin
-    Hours := Seconds div 3600;
-    Minutes := (Seconds mod 3600) div 60;
-    Result := Format('%dh %dm', [Hours, Minutes]);
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.ResetUI;
-begin
-  FProgressBar.Position := 0;
-  FProgressLabel.Caption := '';
-  FSpeedLabel.Caption := '';
-  FETALabel.Caption := '';
-  FProgressPanel.Visible := False;
-  FInfoMemo.Lines.Clear;
-  FReleaseNotesMemo.Lines.Clear;
-end;
-
-// Property Setters
-
-procedure TVittixAutoUpdaterUI.SetUIStyle(const Value: TUpdateUIStyle);
-begin
-  if FUIStyle <> Value then
-  begin
-    FUIStyle := Value;
-    ApplyUIStyle;
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.SetButtonStyle(const Value: TUpdateButtonStyle);
-begin
-  if FButtonStyle <> Value then
-  begin
-    FButtonStyle := Value;
-    UpdateButtonStates;
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.SetShowReleaseNotes(const Value: Boolean);
-begin
-  if FShowReleaseNotes <> Value then
-  begin
-    FShowReleaseNotes := Value;
-    if Assigned(FReleaseNotesMemo) then
-    begin
-      FReleaseNotesMemo.Visible := Value and (FUIStyle <> uisCompact);
-      FSplitter.Visible := FReleaseNotesMemo.Visible;
-    end;
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.SetShowProgressDetails(const Value: Boolean);
-begin
-  if FShowProgressDetails <> Value then
-  begin
-    FShowProgressDetails := Value;
-    if Assigned(FProgressLabel) then
-    begin
-      FProgressLabel.Visible := Value;
-      FSpeedLabel.Visible := Value;
-      FETALabel.Visible := Value;
-    end;
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.SetAutoCheck(const Value: Boolean);
-begin
-  if FAutoCheck <> Value then
-  begin
-    FAutoCheck := Value;
-    if Assigned(FAutoCheckTimer) then
-    begin
-      FAutoCheckTimer.Enabled := Value;
-      if Value and (FConfig.CheckInterval > 0) then
-        FAutoCheckTimer.Interval := FConfig.CheckInterval * 3600000; // Convert hours to milliseconds
-    end;
-  end;
-end;
-
-procedure TVittixAutoUpdaterUI.SetConfig(const Value: TUpdaterConfig);
-begin
-  FConfig := Value;
-  if Assigned(FEngine) then
-  begin
-    FEngine.Config := Value;
-
-    // Update version label if possible
-    if FConfig.AppName <> '' then
-    begin
-      FTitleLabel.Caption := FConfig.AppName + ' Updater';
-      try
-        FVersionLabel.Caption := 'Current version: ' + FEngine.CurrentVersion.ToString;
-      except
-        FVersionLabel.Caption := 'Current version: Unknown';
-      end;
-    end;
-
-    // Update auto-check timer interval
-    if FAutoCheck and (Value.CheckInterval > 0) then
-      FAutoCheckTimer.Interval := Value.CheckInterval * 3600000;
-  end;
 end;
 
 procedure Register;
 begin
-  RegisterComponents('VittixAutoUpdater', [TVittixAutoUpdaterUI]);
+  RegisterComponents('VI_CON', [TVittixAutoUpdaterUI]);
 end;
 
 end.
