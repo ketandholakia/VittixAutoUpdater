@@ -349,7 +349,8 @@ begin
   end;
 
   // Validate temp folder
-  if not DirectoryExists(EditTempFolder.Text) then
+  if (Trim(EditTempFolder.Text) <> '') and
+     not DirectoryExists(EditTempFolder.Text) then
     ErrorMsg := ErrorMsg + '- Temp folder does not exist: ' + EditTempFolder.Text + #13#10;
 
   // Validate proxy settings
@@ -378,11 +379,7 @@ end;
 
 function TUpdateSettingsForm.TestManifestUrl(const Url: string): Boolean;
 begin
-  // For compatibility, just validate URL format
-  // Actual testing would require HTTP client implementation
   Result := ValidateUrl(Url);
-  if Result then
-    ShowMessage('URL format is valid. Network testing requires newer Delphi version.');
 end;
 
 // Button event handlers
@@ -507,9 +504,9 @@ begin
   begin
     Url := ListManifestUrls.Items[Index];
     if TestManifestUrl(Url) then
-      ShowMessage('URL is accessible and returned HTTP 200 OK.')
+      ShowMessage('URL format validation passed.')
     else
-      ShowMessage('URL test failed. Check the URL and your internet connection.');
+      ShowMessage('URL format validation failed.');
   end;
 end;
 

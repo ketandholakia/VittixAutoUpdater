@@ -27,6 +27,7 @@ type
     FDownloadedFile: string;
     FExtractPath: string;
     FLastManifest: TUpdateManifest;
+    FCancelRequested: Boolean;
 
     FOnStateChange: TUpdateStateEvent;
     FOnDownloadProgress: TDownloadProgressEvent;
@@ -96,6 +97,7 @@ begin
   FState := usIdle;
   FDownloadedFile := '';
   FExtractPath := '';
+  FCancelRequested := False;
 
   try
 {$IFDEF MSWINDOWS}
@@ -117,6 +119,9 @@ end;
 
 procedure TUpdateEngine.SetState(NewState: TUpdateState; const StatusMsg: string);
 begin
+  if FCancelRequested and (NewState <> usCancelled) then
+    Exit;
+
   FState := NewState;
   if Assigned(FOnStateChange) then
     FOnStateChange(Self, NewState, StatusMsg);
@@ -182,6 +187,7 @@ begin
   if FState <> usIdle then
     Exit;
 
+  FCancelRequested := False;
   SetState(usChecking, 'Checking for updates...');
 
   TThread.CreateAnonymousThread(
@@ -197,6 +203,9 @@ begin
             FConfig.ManifestUrls,
             FConfig.AppName,
             Manifest);
+
+        if FCancelRequested then
+          Exit;
 
         if not Success then
         begin
@@ -275,6 +284,7 @@ begin
   if FState <> usAvailable then
     Exit;
 
+  FCancelRequested := False;
   SetState(usDownloading, 'Downloading update...');
 
   try
@@ -289,6 +299,8 @@ begin
 
     if Result then
       SetState(usReady, 'Update ready to install')
+    else if FCancelRequested or (FState = usCancelled) then
+      SetState(usCancelled, 'Download cancelled')
     else
     begin
       SetState(usFailed, 'Download failed');
@@ -420,6 +432,7 @@ begin
   if not IsSafeToApply then
     Exit;
 
+  FCancelRequested := False;
   SetState(usExtracting, 'Extracting update...');
 
   try
@@ -509,7 +522,11 @@ end;
 procedure TUpdateEngine.Cancel;
 begin
   if FState in [usChecking, usDownloading] then
+  begin
+    FCancelRequested := True;
+    FNetwork.CancelCurrentOperation;
     SetState(usCancelled, 'Update cancelled');
+  end;
 end;
 
 function TUpdateEngine.Rollback: Boolean;
@@ -542,11 +559,13 @@ begin
   // Clean up temporary files
   CleanupTempFiles;
 
+  FCancelRequested := False;
+
   // Reset state to idle
   SetState(usIdle, 'Ready to check for updates');
 
   // Clear last manifest
-  FillChar(FLastManifest, SizeOf(FLastManifest), 0);
+  FLastManifest := TUpdateManifest.Empty;
 end;
 
 // Compatibility function implementation

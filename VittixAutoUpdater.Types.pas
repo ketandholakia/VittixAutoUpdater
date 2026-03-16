@@ -323,8 +323,7 @@ begin
   Result :=
     (Trim(AppName) <> '') and
     Version.IsValid and
-    (Trim(DownloadUrl) <> '') and
-    (FileSize > 0);
+    (Trim(DownloadUrl) <> '');
 end;
 
 { ===================== TUpdaterConfig ===================== }

@@ -29,6 +29,8 @@ type
     FConfig: TUpdaterConfig;
     FCurrentManifest: TUpdateManifest;
     FIsUpdating: Boolean;
+    FIsLayingOut: Boolean;
+    FCreatingUI: Boolean;
     FAutoCheck: Boolean;
     FAutoCheckTimer: TTimer;
 
@@ -117,6 +119,7 @@ type
     procedure ResetUI;
 
   protected
+    procedure Loaded; override;
     procedure Resize; override;
     procedure Paint; override;
 
@@ -212,9 +215,13 @@ begin
   FAutoCheckTimer.OnTimer := OnAutoCheckTimer;
 
   // Create UI
-  CreateUI;
-  LayoutControls;
-  UpdateButtonStates;
+  FCreatingUI := True;
+  try
+    CreateUI;
+  finally
+    FCreatingUI := False;
+  end;
+  ApplyUIStyle;
   ResetUI;
 end;
 
@@ -349,86 +356,142 @@ begin
 end;
 
 procedure TVittixAutoUpdaterUI.LayoutControls;
+var
+  ButtonPanelWidth: Integer;
+  ProgressWidth: Integer;
 begin
+  if FIsLayingOut or FCreatingUI then
+    Exit;
+
+  if not Assigned(FMainPanel) or
+     not Assigned(FHeaderPanel) or
+     not Assigned(FContentPanel) or
+     not Assigned(FButtonPanel) or
+     not Assigned(FProgressPanel) or
+     not Assigned(FProgressBar) or
+     not Assigned(FCheckButton) or
+     not Assigned(FDownloadButton) or
+     not Assigned(FInstallButton) or
+     not Assigned(FCancelButton) or
+     not Assigned(FSettingsButton) or
+     not Assigned(FInfoMemo) or
+     not Assigned(FReleaseNotesMemo) then
+    Exit;
+
+  FIsLayingOut := True;
+  FMainPanel.DisableAlign;
+  FContentPanel.DisableAlign;
+  FButtonPanel.DisableAlign;
+  FProgressPanel.DisableAlign;
   // Main panel fills the entire component
-  FMainPanel.Align := alClient;
+  try
+    if FMainPanel.Align <> alClient then
+      FMainPanel.Align := alClient;
 
-  // Header at top
-  FHeaderPanel.Align := alTop;
+    // Header at top
+    if FHeaderPanel.Align <> alTop then
+      FHeaderPanel.Align := alTop;
 
-  // Progress panel at bottom (initially hidden)
-  FProgressPanel.Align := alBottom;
-  FProgressPanel.Visible := False;
+    // Progress panel at bottom (initially hidden)
+    if FProgressPanel.Align <> alBottom then
+      FProgressPanel.Align := alBottom;
 
-  // Button panel above progress
-  FButtonPanel.Align := alBottom;
+    // Button panel above progress
+    if FButtonPanel.Align <> alBottom then
+      FButtonPanel.Align := alBottom;
 
-  // Content fills the middle
-  FContentPanel.Align := alClient;
+    // Content fills the middle
+    if FContentPanel.Align <> alClient then
+      FContentPanel.Align := alClient;
 
-  // Position header labels
-  FTitleLabel.Left := 10;
-  FTitleLabel.Top := 8;
+    // Position header labels
+    FTitleLabel.Left := 10;
+    FTitleLabel.Top := 8;
 
-  FStatusLabel.Left := 10;
-  FStatusLabel.Top := 28;
+    FStatusLabel.Left := 10;
+    FStatusLabel.Top := 28;
 
-  FVersionLabel.Left := 10;
-  FVersionLabel.Top := 44;
+    FVersionLabel.Left := 10;
+    FVersionLabel.Top := 44;
 
-  // Position content controls
-  FInfoMemo.Align := alClient;
-  FReleaseNotesMemo.Width := 200;
-  FReleaseNotesMemo.Align := alRight;
+    // Position content controls
+    if FInfoMemo.Align <> alClient then
+      FInfoMemo.Align := alClient;
+    FReleaseNotesMemo.Width := Min(200, Max(0, FContentPanel.ClientWidth div 2));
+    if FReleaseNotesMemo.Align <> alRight then
+      FReleaseNotesMemo.Align := alRight;
 
-  // Position progress controls
-  FProgressBar.Left := 10;
-  FProgressBar.Top := 10;
-  FProgressBar.Width := Width - 20;
-  FProgressBar.Height := 17;
-  FProgressBar.Anchors := [akLeft, akTop, akRight];
+    // Position progress controls
+    ProgressWidth := Max(0, FProgressPanel.ClientWidth - 20);
+    FProgressBar.Left := 10;
+    FProgressBar.Top := 10;
+    FProgressBar.Width := ProgressWidth;
+    FProgressBar.Height := 17;
+    FProgressBar.Anchors := [akLeft, akTop, akRight];
 
-  FProgressLabel.Left := 10;
-  FProgressLabel.Top := 32;
+    FProgressLabel.Left := 10;
+    FProgressLabel.Top := 32;
 
-  FSpeedLabel.Left := 150;
-  FSpeedLabel.Top := 32;
+    FSpeedLabel.Left := 150;
+    FSpeedLabel.Top := 32;
 
-  FETALabel.Left := 300;
-  FETALabel.Top := 32;
+    FETALabel.Left := 300;
+    FETALabel.Top := 32;
 
-  // Position buttons
-  FSettingsButton.Left := Width - 35;
-  FSettingsButton.Top := 10;
-  FSettingsButton.Width := 25;
-  FSettingsButton.Height := 25;
-  FSettingsButton.Anchors := [akTop, akRight];
+    // Position buttons
+    ButtonPanelWidth := FButtonPanel.ClientWidth;
 
-  FCancelButton.Left := Width - 85;
-  FCancelButton.Top := 10;
-  FCancelButton.Width := 75;
-  FCancelButton.Anchors := [akTop, akRight];
+    FSettingsButton.Left := Max(10, ButtonPanelWidth - 35);
+    FSettingsButton.Top := 10;
+    FSettingsButton.Width := 25;
+    FSettingsButton.Height := 25;
+    FSettingsButton.Anchors := [akTop, akRight];
 
-  FInstallButton.Left := Width - 170;
-  FInstallButton.Top := 10;
-  FInstallButton.Width := 75;
-  FInstallButton.Anchors := [akTop, akRight];
+    FCancelButton.Left := Max(10, ButtonPanelWidth - 85);
+    FCancelButton.Top := 10;
+    FCancelButton.Width := 75;
+    FCancelButton.Anchors := [akTop, akRight];
 
-  FDownloadButton.Left := Width - 255;
-  FDownloadButton.Top := 10;
-  FDownloadButton.Width := 75;
-  FDownloadButton.Anchors := [akTop, akRight];
+    FInstallButton.Left := Max(10, ButtonPanelWidth - 170);
+    FInstallButton.Top := 10;
+    FInstallButton.Width := 75;
+    FInstallButton.Anchors := [akTop, akRight];
 
-  FCheckButton.Left := 10;
-  FCheckButton.Top := 10;
-  FCheckButton.Width := 100;
+    FDownloadButton.Left := Max(10, ButtonPanelWidth - 255);
+    FDownloadButton.Top := 10;
+    FDownloadButton.Width := 75;
+    FDownloadButton.Anchors := [akTop, akRight];
+
+    FCheckButton.Left := 10;
+    FCheckButton.Top := 10;
+    FCheckButton.Width := 100;
+  finally
+    FProgressPanel.EnableAlign;
+    FButtonPanel.EnableAlign;
+    FContentPanel.EnableAlign;
+    FMainPanel.EnableAlign;
+    FIsLayingOut := False;
+  end;
 end;
 
 procedure TVittixAutoUpdaterUI.Resize;
 begin
   inherited;
+  if FCreatingUI or (csLoading in ComponentState) or (csDestroying in ComponentState) then
+    Exit;
+
   if Assigned(FMainPanel) then
     LayoutControls;
+end;
+
+procedure TVittixAutoUpdaterUI.Loaded;
+begin
+  inherited;
+  if not FCreatingUI then
+  begin
+    LayoutControls;
+    UpdateButtonStates;
+  end;
 end;
 
 procedure TVittixAutoUpdaterUI.Paint;

@@ -127,13 +127,10 @@ begin
 end;
 
 procedure TViConAutoUpdater.DownloadAndInstall;
-var
-  Manifest: TUpdateManifest;
 begin
-  // In real app, store manifest from CheckForUpdates
   if FEngine.State = usAvailable then
   begin
-    if FEngine.DownloadUpdate(Manifest) then
+    if FEngine.DownloadUpdate(FEngine.LastManifest) then
       FEngine.ApplyUpdate;
   end;
 end;

@@ -80,7 +80,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Automatically download updates'
           TabOrder = 2
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkAutoInstall: TCheckBox
           Left = 16
@@ -89,7 +89,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Automatically install updates'
           TabOrder = 3
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkAllowDowngrade: TCheckBox
           Left = 16
@@ -98,7 +98,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Allow version downgrades'
           TabOrder = 4
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkStartWithWindows: TCheckBox
           Left = 16
@@ -107,7 +107,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Start with Windows'
           TabOrder = 5
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
       end
       object GroupNotifications: TGroupBox
@@ -126,7 +126,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Checked = True
           State = cbChecked
           TabOrder = 0
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkSoundNotifications: TCheckBox
           Left = 16
@@ -135,7 +135,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Play notification sounds'
           TabOrder = 1
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkMinimizeToTray: TCheckBox
           Left = 16
@@ -144,7 +144,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Height = 17
           Caption = 'Minimize to system tray'
           TabOrder = 2
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
       end
     end
@@ -460,7 +460,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Checked = True
           State = cbChecked
           TabOrder = 0
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkVerifyChecksum: TCheckBox
           Left = 16
@@ -471,7 +471,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Checked = True
           State = cbChecked
           TabOrder = 1
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ChkRequireHttps: TCheckBox
           Left = 16
@@ -482,7 +482,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Checked = True
           State = cbChecked
           TabOrder = 2
-          OnClick = SetModified
+          OnClick = OnControlChanged
         end
         object ListTrustedPublishers: TCheckListBox
           Left = 16

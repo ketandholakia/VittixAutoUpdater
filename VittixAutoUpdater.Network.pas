@@ -52,6 +52,8 @@ type
       OnProgress: TDownloadProgressEvent;
       const ExpectedChecksum: string = ''): Boolean;
 
+    procedure CancelCurrentOperation;
+
     // Properties
     property ConnectionTimeout: Integer read FConnectionTimeout write FConnectionTimeout;
     property MaxRetries: Integer read FMaxRetries write FMaxRetries;
@@ -80,6 +82,7 @@ begin
   FMaxRetries := 3;
   FUserAgent := 'VI_CON-AutoUpdater/1.0';
   FProxy := '';
+  FCancelDownload := False;
 end;
 
 procedure TUpdateNetworkManager.Log(const Msg: string);
@@ -132,6 +135,11 @@ begin
   end;
 end;
 
+procedure TUpdateNetworkManager.CancelCurrentOperation;
+begin
+  FCancelDownload := True;
+end;
+
 function TUpdateNetworkManager.FetchManifest(
   const Urls: TArray<string>;
   const AppName: string;
@@ -147,16 +155,23 @@ var
   Retry: Integer;
 begin
   Result := False;
-  FillChar(Manifest, SizeOf(Manifest), 0);
+  Manifest := TUpdateManifest.Empty;
+  FCancelDownload := False;
 
   for Url in Urls do
   begin
+    if FCancelDownload then
+      Exit(False);
+
     Log('Trying manifest URL: ' + Url);
 
     Stream := TMemoryStream.Create;
     try
       for Retry := 1 to FMaxRetries do
       begin
+        if FCancelDownload then
+          Break;
+
         Client := THttpClient(CreateHttpClient);
         try
           Stream.Size := 0;
@@ -168,11 +183,17 @@ begin
             if (Response.StatusCode >= 200) and
                (Response.StatusCode < 300) then
             begin
+              if FCancelDownload then
+                Break;
+
               Stream.Position := 0;
               SetLength(JsonStr, Stream.Size);
               Stream.Read(JsonStr[1], Stream.Size);
 
               JsonObj := TJSONObject.ParseJSONValue(JsonStr) as TJSONObject;
+              if not Assigned(JsonObj) then
+                raise Exception.Create('Invalid manifest JSON');
+
               try
                 JsonVal := JsonObj.GetValue(AppName);
 
@@ -199,6 +220,9 @@ begin
 
                   AppObj.TryGetValue<string>(
                     'checksum', Manifest.Checksum);
+
+                  if AppObj.TryGetValue<string>('release_date', JsonStr) then
+                    TryStrToDateTime(JsonStr, Manifest.ReleaseDate);
 
                   if AppObj.TryGetValue<string>('min_version', JsonStr) then
                     Manifest.MinVersion := TAppVersion.Create(JsonStr);
@@ -265,51 +289,65 @@ begin
 
   FileStream := TFileStream.Create(SavePath, fmCreate);
   try
-    HttpClient := THttpClient(CreateHttpClient);
     try
-      HttpClient.OnReceiveData := ReceiveDataHandler;
+      HttpClient := THttpClient(CreateHttpClient);
+      try
+        HttpClient.OnReceiveData := ReceiveDataHandler;
 
-      Response := HttpClient.Get(Url, FileStream);
+        Response := HttpClient.Get(Url, FileStream);
 
-      if (Response.StatusCode < 200) or
-         (Response.StatusCode >= 300) then
-        raise ENetworkException.CreateFmt(
-          'HTTP error %d: %s',
-          [Response.StatusCode, Response.StatusText]);
+        if FCancelDownload then
+        begin
+          Log('Download cancelled');
+          Exit(False);
+        end;
 
-      if (Response.ContentLength > 0) and
-         (FileStream.Size <> Response.ContentLength) then
-        raise ENetworkException.Create('Downloaded file size mismatch');
-
-      if ExpectedChecksum <> '' then
-      begin
-        CleanExpected := NormalizeChecksum(ExpectedChecksum);
-        ActualChecksum := CalculateSHA256(SavePath);
-
-        if not SameText(ActualChecksum, CleanExpected) then
+        if (Response.StatusCode < 200) or
+           (Response.StatusCode >= 300) then
           raise ENetworkException.CreateFmt(
-            'Checksum mismatch: expected %s, got %s',
-            [CleanExpected, ActualChecksum]);
+            'HTTP error %d: %s',
+            [Response.StatusCode, Response.StatusText]);
+
+        if (Response.ContentLength > 0) and
+           (FileStream.Size <> Response.ContentLength) then
+          raise ENetworkException.Create('Downloaded file size mismatch');
+
+        if ExpectedChecksum <> '' then
+        begin
+          CleanExpected := NormalizeChecksum(ExpectedChecksum);
+          ActualChecksum := CalculateSHA256(SavePath);
+
+          if not SameText(ActualChecksum, CleanExpected) then
+            raise ENetworkException.CreateFmt(
+              'Checksum mismatch: expected %s, got %s',
+              [CleanExpected, ActualChecksum]);
+        end;
+
+        Result := not FCancelDownload;
+      finally
+        HttpClient.Free;
       end;
-
-      Result := not FCancelDownload;
-
-    finally
-      HttpClient.Free;
+    except
+      on E: Exception do
+      begin
+        if FCancelDownload then
+        begin
+          Log('Download cancelled');
+          Result := False;
+        end
+        else
+        begin
+          Log('Download failed: ' + E.Message);
+          raise;
+        end;
+      end;
     end;
-  except
-    on E: Exception do
-    begin
-      Log('Download failed: ' + E.Message);
-
-      if FileExists(SavePath) then
-        SysUtils.DeleteFile(SavePath);
-
-      raise;
-    end;
+  finally
+    FileStream.Free;
   end;
 
-  FileStream.Free;
+  if not Result and FileExists(SavePath) then
+    SysUtils.DeleteFile(SavePath);
 end;
 
 function TUpdateNetworkManager.CalculateSHA256(
