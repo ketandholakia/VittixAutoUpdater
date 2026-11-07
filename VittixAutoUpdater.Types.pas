@@ -80,6 +80,7 @@ type
     MinVersion: TAppVersion; // optional
     ReleaseDate: TDateTime;
     Severity: TUpdateSeverity;
+    IssuedAt: TDateTime;          // signed UTC issuance timestamp
 
     function IsValid: Boolean;
     function HasMinVersion: Boolean;
@@ -101,6 +102,9 @@ type
       Sender: TObject;
       NewState: TUpdateState;
       const StatusMessage: string) of object;
+
+  TSecurityWarningEvent = procedure(Sender: TObject;
+    const WarningMessage: string) of object;
 
   // ================================
   // Update result
@@ -129,7 +133,29 @@ type
     TempFolder: string;
     ConnectionTimeout: Integer;  // seconds
     MaxRetries: Integer;
+    MaxManifestAgeDays: Integer;
     UserAgent: string;
+
+    // Security options
+    RequireChecksum: Boolean;    // reject any manifest with no checksum
+    RequireHttps: Boolean;       // reject plaintext HTTP and redirects
+    RequireSecureConfig: Boolean; // retained compatibility field; signatures are mandatory by default
+    VerifyManifestSignature: Boolean;
+    VerifyAuthenticode: Boolean;
+    PinnedPublisherThumbprints: TArray<string>; // SHA-256 cert thumbprints
+    ManifestPublicKey: string;   // ECDSA P-256 X||Y, hex encoded
+    ManifestTrustedPublicKeys: TArray<string>; // provisioned ECDSA P-256 X||Y keys
+    AllowInsecureUnsignedManifests: Boolean; // explicit migration-only escape hatch
+    ManifestHmacKey: string; // DEPRECATED: ignored; use ManifestPublicKey
+
+    // ZIP extraction resource limits. Zero or negative values are rejected.
+    MaxArchiveBytes: Int64;
+    MaxArchiveEntryCount: Integer;
+    MaxArchiveTotalUncompressedBytes: Int64;
+    MaxArchiveSingleEntryBytes: Int64;
+    MaxArchivePathDepth: Integer;
+    MaxArchivePathLength: Integer;
+    MaxArchiveExpansionRatio: Integer;
 
     class function Default: TUpdaterConfig; static;
   end;
@@ -246,31 +272,38 @@ class function TAppVersion.TryParse(
   out Version: TAppVersion): Boolean;
 var
   Parts: TArray<string>;
+  ParsedVersion: TAppVersion;
+  PartValue, I: Integer;
 begin
   Result := False;
   FillChar(Version, SizeOf(Version), 0);
 
   if Trim(VersionStr) = '' then
     Exit;
+  if VersionStr[Length(VersionStr)] = '.' then
+    Exit;
 
   // Split version string by dots - compatible with older Delphi
   SetLength(Parts, 0);
   ParseVersionString(VersionStr, Parts);
+  if (Length(Parts) = 0) or (Length(Parts) > 4) then
+    Exit;
 
-  try
-    if Length(Parts) >= 1 then
-      Version.Major := StrToInt(Trim(Parts[0]));
-    if Length(Parts) >= 2 then
-      Version.Minor := StrToInt(Trim(Parts[1]));
-    if Length(Parts) >= 3 then
-      Version.Patch := StrToInt(Trim(Parts[2]));
-    if Length(Parts) >= 4 then
-      Version.Build := StrToInt(Trim(Parts[3]));
-
-    Result := True;
-  except
-    Result := False;
+  FillChar(ParsedVersion, SizeOf(ParsedVersion), 0);
+  for I := 0 to High(Parts) do
+  begin
+    if not TryStrToInt(Trim(Parts[I]), PartValue) or
+       (PartValue < 0) or (PartValue > High(Word)) then
+      Exit;
+    case I of
+      0: ParsedVersion.Major := PartValue;
+      1: ParsedVersion.Minor := PartValue;
+      2: ParsedVersion.Patch := PartValue;
+      3: ParsedVersion.Build := PartValue;
+    end;
   end;
+  Version := ParsedVersion;
+  Result := True;
 end;
 
 {$IFDEF MSWINDOWS}
@@ -341,14 +374,33 @@ begin
 
   Result.ConnectionTimeout := 30; // seconds
   Result.MaxRetries := 3;
+  Result.MaxManifestAgeDays := 30;
   Result.UserAgent := 'VittixAutoUpdater/1.0';
+
+  Result.RequireChecksum := True;  // fail closed by default
+  Result.RequireHttps := True;
+  Result.RequireSecureConfig := True;
+  Result.VerifyManifestSignature := True;
+  Result.VerifyAuthenticode := False;
+  SetLength(Result.PinnedPublisherThumbprints, 0);
+  Result.ManifestPublicKey := '';
+  SetLength(Result.ManifestTrustedPublicKeys, 0);
+  Result.AllowInsecureUnsignedManifests := False;
+  Result.ManifestHmacKey := '';
+  Result.MaxArchiveBytes := 536870912; // 512 MiB
+  Result.MaxArchiveEntryCount := 4096;
+  Result.MaxArchiveTotalUncompressedBytes := 1073741824; // 1 GiB
+  Result.MaxArchiveSingleEntryBytes := 268435456; // 256 MiB
+  Result.MaxArchivePathDepth := 32;
+  Result.MaxArchivePathLength := 240;
+  Result.MaxArchiveExpansionRatio := 200;
 end;
 
 // Helper procedure for parsing version strings (compatibility)
 procedure ParseVersionString(const VersionStr: string; var Parts: TArray<string>);
 var
   S: string;
-  I, StartPos, Len: Integer;
+  I, StartPos: Integer;
   PartsList: array of string;
   Count: Integer;
 begin
@@ -394,6 +446,7 @@ begin
   FillChar(Result.Version, SizeOf(Result.Version), 0);
   FillChar(Result.MinVersion, SizeOf(Result.MinVersion), 0);
   Result.ReleaseDate := 0;
+  Result.IssuedAt := 0;
   Result.Severity := usOptional;
 end;
 

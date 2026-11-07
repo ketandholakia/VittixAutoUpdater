@@ -3,7 +3,7 @@ unit VittixAutoUpdaterEnhancedDemo;
 interface
 
 uses
-  Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants,
+  Winapi.Windows, Winapi.Messages, System.SysUtils, System.UITypes, System.Variants,
   System.Classes, System.IniFiles, System.IOUtils,
   Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,
   Vcl.ExtCtrls, Vcl.ComCtrls,
@@ -13,6 +13,7 @@ uses
 type
   TEnhancedDemoForm = class(TForm)
     TopPanel: TPanel;
+    HeaderTextPanel: TPanel;
     LblTitle: TLabel;
     LblVersion: TLabel;
     LblStatus: TLabel;
@@ -20,11 +21,13 @@ type
     BtnSettings: TButton;
     BtnReset: TButton;
     BtnToggleLog: TButton;
+    HeaderActionsPanel: TFlowPanel;
     UpdaterUI: TVittixAutoUpdaterUI;
     LogPanel: TPanel;
     MemoLog: TMemo;
     StatusBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
+    procedure FormResize(Sender: TObject);
     procedure FormDestroy(Sender: TObject);
     procedure BtnCheckClick(Sender: TObject);
     procedure BtnSettingsClick(Sender: TObject);
@@ -48,6 +51,8 @@ type
     procedure SetupUpdaterComponent;
     procedure LogMessage(const Message: string; const Level: string = 'INFO');
     procedure SetLogVisible(const Value: Boolean);
+    procedure ApplyDemoLayout;
+    procedure SetupHeaderActions;
   public
   end;
 
@@ -249,6 +254,8 @@ begin
   Caption := 'VittixAutoUpdater Demo';
   Position := poScreenCenter;
   FLogVisible := True;
+  SetupHeaderActions;
+  ApplyDemoLayout;
 
   LoadConfiguration;
   SetupUpdaterComponent;
@@ -257,6 +264,48 @@ begin
   LogMessage('Demo started');
   if Length(FAppConfig.ManifestUrls) = 0 then
     LogMessage('No manifest URL configured. Open Settings before checking.', 'WARN');
+end;
+
+procedure TEnhancedDemoForm.FormResize(Sender: TObject);
+begin
+  ApplyDemoLayout;
+end;
+
+procedure TEnhancedDemoForm.ApplyDemoLayout;
+var
+  MemoMargins: LPARAM;
+begin
+  Constraints.MinWidth := MulDiv(900, PixelsPerInch, 96);
+  Constraints.MinHeight := MulDiv(560, PixelsPerInch, 96);
+  HeaderActionsPanel.Width := MulDiv(424, PixelsPerInch, 96);
+  BtnToggleLog.Width := MulDiv(100, PixelsPerInch, 96);
+  BtnCheck.Width := MulDiv(100, PixelsPerInch, 96);
+  BtnSettings.Width := MulDiv(96, PixelsPerInch, 96);
+  BtnReset.Width := MulDiv(80, PixelsPerInch, 96);
+  BtnToggleLog.Height := MulDiv(30, PixelsPerInch, 96);
+  BtnCheck.Height := MulDiv(30, PixelsPerInch, 96);
+  BtnSettings.Height := MulDiv(30, PixelsPerInch, 96);
+  BtnReset.Height := MulDiv(30, PixelsPerInch, 96);
+  if Assigned(MemoLog) then
+  begin
+    MemoMargins := MakeLParam(MulDiv(8, PixelsPerInch, 96),
+      MulDiv(8, PixelsPerInch, 96));
+    MemoLog.Perform(EM_SETMARGINS, EC_LEFTMARGIN or EC_RIGHTMARGIN,
+      MemoMargins);
+  end;
+end;
+
+procedure TEnhancedDemoForm.SetupHeaderActions;
+begin
+  HeaderActionsPanel.Align := alRight;
+  HeaderActionsPanel.FlowStyle := fsLeftRightTopBottom;
+  HeaderActionsPanel.AutoWrap := False;
+  HeaderActionsPanel.BevelOuter := bvNone;
+  HeaderActionsPanel.ShowCaption := False;
+  BtnToggleLog.Anchors := [akLeft, akTop];
+  BtnCheck.Anchors := [akLeft, akTop];
+  BtnSettings.Anchors := [akLeft, akTop];
+  BtnReset.Anchors := [akLeft, akTop];
 end;
 
 procedure TEnhancedDemoForm.FormDestroy(Sender: TObject);
@@ -358,7 +407,7 @@ begin
     [FormatDateTime('yyyy-mm-dd hh:nn:ss', Now), Level, Message]));
   MemoLog.SelStart := Length(MemoLog.Text);
   MemoLog.Perform(EM_SCROLLCARET, 0, 0);
-  StatusBar.SimpleText := Message;
+  StatusBar.SimpleText := '  ' + Message;
 end;
 
 procedure TEnhancedDemoForm.SetLogVisible(const Value: Boolean);

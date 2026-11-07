@@ -441,25 +441,16 @@ object UpdateSettingsForm: TUpdateSettingsForm
         Left = 8
         Top = 112
         Width = 292
-        Height = 217
+         Height = 105
         Caption = 'Security'
         TabOrder = 1
-        object LblTrustedPublishers: TLabel
-          Left = 16
-          Top = 88
-          Width = 93
-          Height = 13
-          Caption = 'Trusted Publishers:'
-        end
-        object ChkVerifySignature: TCheckBox
+         object ChkVerifySignature: TCheckBox
           Left = 16
           Top = 24
           Width = 200
           Height = 17
           Caption = 'Verify digital signatures'
-          Checked = True
-          State = cbChecked
-          TabOrder = 0
+           TabOrder = 0
           OnClick = OnControlChanged
         end
         object ChkVerifyChecksum: TCheckBox
@@ -473,7 +464,7 @@ object UpdateSettingsForm: TUpdateSettingsForm
           TabOrder = 1
           OnClick = OnControlChanged
         end
-        object ChkRequireHttps: TCheckBox
+         object ChkRequireHttps: TCheckBox
           Left = 16
           Top = 62
           Width = 200
@@ -482,36 +473,17 @@ object UpdateSettingsForm: TUpdateSettingsForm
           Checked = True
           State = cbChecked
           TabOrder = 2
-          OnClick = OnControlChanged
-        end
-        object ListTrustedPublishers: TCheckListBox
-          Left = 16
-          Top = 107
-          Width = 200
-          Height = 73
-          ItemHeight = 13
-          TabOrder = 3
-          OnClick = UpdateControlStates
-        end
-        object BtnAddPublisher: TButton
-          Left = 222
-          Top = 107
-          Width = 60
-          Height = 25
-          Caption = 'Add'
-          TabOrder = 4
-          OnClick = BtnAddPublisherClick
-        end
-        object BtnRemovePublisher: TButton
-          Left = 222
-          Top = 138
-          Width = 60
-          Height = 25
-          Caption = 'Remove'
-          Enabled = False
-          TabOrder = 5
-          OnClick = BtnRemovePublisherClick
-        end
+           OnClick = OnControlChanged
+         end
+         object ChkVerifyAuthenticode: TCheckBox
+           Left = 16
+           Top = 81
+           Width = 250
+           Height = 17
+           Caption = 'Verify Authenticode signature'
+           TabOrder = 3
+           OnClick = OnControlChanged
+         end
       end
       object GroupLogging: TGroupBox
         Left = 320

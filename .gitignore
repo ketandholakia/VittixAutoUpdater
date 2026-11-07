@@ -79,3 +79,8 @@ __recovery/
 
 # Boss dependency manager vendor folder https://github.com/HashLoad/boss
 modules/
+
+# Update-signing private keys (never commit or distribute)
+*-signing-private.pem
+*.signing-key.pem
+.update-signing-key.pem

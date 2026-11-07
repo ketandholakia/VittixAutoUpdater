@@ -1,6 +1,6 @@
 # VittixAutoUpdater
 
-A production-ready, cross-platform application auto-updater component written from scratch in Delphi/Pascal.
+A Windows application auto-updater component written in Delphi/Pascal.
 
 ## Features
 
@@ -136,6 +136,7 @@ Create a JSON file on your update server:
   "MyApp": {
     "version": "2.1.5.100",
     "download_url": "https://cdn.myapp.com/releases/MyApp_v2.1.5.zip",
+    "issued_at": "2026-10-20T12:00:00Z",
     "release_notes": "Bug fixes and performance improvements",
     "file_size": 15728640,
     "checksum": "sha256:abc123def456...",
@@ -152,6 +153,7 @@ Create a JSON file on your update server:
 | `version` | ✅ Yes | Version string (e.g., "2.1.5.100") |
 | `download_url` | ✅ Yes | Direct download link to ZIP file |
 | `file_size` | ⚠️ Recommended | File size in bytes |
+| `issued_at` | Required for signed manifests | Signed UTC issuance time; the age check applies only when manifest signature verification is enabled |
 | `checksum` | ⚠️ Recommended | SHA256 hash for verification |
 | `release_notes` | ❌ No | Update description |
 | `min_version` | ❌ No | Minimum version that can update |
@@ -195,8 +197,80 @@ type
     TempFolder: string;            // Custom temp directory
     ConnectionTimeout: Integer;    // Seconds
     MaxRetries: Integer;           // Retry attempts
+    RequireChecksum: Boolean;       // Default True
+    RequireHttps: Boolean;          // Default True
+    RequireSecureConfig: Boolean;   // Default True
+    MaxManifestAgeDays: Integer;    // Default 30
+    VerifyManifestSignature: Boolean;
+    ManifestPublicKey: string;      // ECDSA P-256 X||Y as 128 hex characters
+    ManifestTrustedPublicKeys: TArray<string>; // rotation overlap keys
+    AllowInsecureUnsignedManifests: Boolean; // migration-only; default False
+    VerifyAuthenticode: Boolean;    // Default False
+    PinnedPublisherThumbprints: TArray<string>; // SHA-256 certificate hashes
   end;
 ```
+
+### Signed manifests (ECDSA P-256)
+
+Manifest signatures are mandatory by default and verified with Windows CNG
+using ECDSA P-256/SHA-256. The `.sig` file contains
+`VAU-ECDSA-P256-SHA256-v1:<key-id>:<base64>` where the Base64 payload is the
+64-byte big-endian `r || s` signature. The signature covers the exact manifest
+file bytes. `key-id` is lowercase SHA-256 hex of the 64 raw public-key `X||Y`
+bytes. The manifest cannot supply trusted keys. The private signing key is
+used only offline; configure clients with the independently provisioned public
+key, never the private key.
+
+Create and protect a signing key outside this repository:
+
+```sh
+openssl ecparam -name prime256v1 -genkey -noout -aes256 -out update-signing-private.pem
+chmod 600 update-signing-private.pem
+python -m pip install cryptography
+python generate_manifest.py --signing-key update-signing-private.pem --print-public-key
+```
+
+Copy the printed 128-character X||Y value to `Config.ManifestPublicKey` (or to
+`Config.ManifestTrustedPublicKeys` during a rotation). `TUpdaterConfig.Default`
+already enables signature verification and secure configuration. To generate a signed release, pass
+`--signing-key update-signing-private.pem` to `generate_manifest.py`. The
+deployment script requires `MANIFEST_SIGNING_KEY` to point at the private key
+and uploads both `manifest.json` and `manifest.json.sig`. Private-key patterns
+are ignored by Git; do not weaken that protection or commit a key.
+
+When `RequireHttps` is enabled (the default), HTTP URLs are rejected and only
+validated HTTPS redirects are followed, with a bounded hop count. HTTPS to
+plaintext HTTP downgrade redirects are rejected.
+
+Current defaults: checksum and HTTPS required; signed metadata and secure
+configuration required; no public key is provisioned until the application
+developer configures one; Authenticode verification disabled; no publisher
+pins; `MaxManifestAgeDays = 30`; downgrades disabled; three download attempts.
+An update check fails closed until a valid trusted public key is configured.
+
+Subscribe to `Engine.OnSecurityWarning` (or `Component.Engine.OnSecurityWarning`)
+to receive a callback for insecure unsigned mode, missing public keys, or a
+non-empty legacy `ManifestHmacKey`. Warnings are also written to the Windows
+debugger. The explicit `AllowInsecureUnsignedManifests` option is for temporary
+migration only and must not be enabled in production.
+
+See [manifest signing](docs/security/update-manifest-signing.md),
+[key management](docs/security/signing-key-management.md), and
+[anti-rollback behavior](docs/security/manifest-anti-rollback.md) for the
+provisioning and release workflow.
+
+The DUnitX loopback-server tests use the test-only `VITTIX_TEST_LOOPBACK`
+compile define. It exposes `AllowLoopbackHttpForTests` only in that test build;
+production projects must not define it, and production binaries have no runtime
+option to allow HTTP loopback requests.
+
+`VerifyAuthenticode` is optional and defaults to False. When enabled, every
+extracted `.exe` and `.dll` must pass Windows `WinVerifyTrust` before the helper
+is launched. If `PinnedPublisherThumbprints` is non-empty, the SHA-256 hash of
+each embedded signing certificate must also match one of those pins.
+`ManifestHmacKey` remains in the config record for source compatibility but is
+deprecated and ignored; configure the ECDSA public key and enable
+`VerifyManifestSignature` instead.
 
 ### Example Configurations
 
@@ -339,19 +413,18 @@ echo "Deployment complete!"
 ### Windows
 - Executable replacement uses batch script
 - Requires file version resources in .exe
-- UAC elevation may be needed for Program Files installation
-
-### macOS
-- App bundle structure requires special handling
-- Code signing verification recommended
-- Gatekeeper compatibility
-
-### Linux
-- Standard file replacement works
-- Consider integration with package managers
-- AppImage self-update support
+- Non-writable install directories fail closed; a signed elevated helper is not yet available
 
 ---
+
+The updater is supported on Windows only. On successful installation, the
+engine requests shutdown through `OnRestartRequired`; if no handler is assigned
+and `RestartAfterInstall` is enabled (the default), it calls
+`Application.Terminate` on the main thread, falling back to `ExitProcess(0)`
+when no VCL `Application` object is available. Updates under a non-writable
+application directory fail with a clear message; a batch file from a
+user-writable temporary directory is never elevated. A separate signed helper
+is a TODO.
 
 ## Security Best Practices
 
@@ -517,9 +590,7 @@ This code is provided as-is for reference and educational purposes.
 
 Based on analysis of TurboUpdate by ErrorSoft, incorporating industry best practices from:
 - Microsoft ClickOnce
-- Sparkle Framework (macOS)
 - Squirrel.Windows
-- Electron AutoUpdater
 
 ---
 

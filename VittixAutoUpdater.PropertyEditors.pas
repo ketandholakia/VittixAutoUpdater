@@ -10,7 +10,7 @@ uses
   {$ELSE}
   DesignEditors, DesignIntf,
   {$ENDIF}
-  VittixAutoUpdater.Types, VittixAutoUpdater.Settings;
+  VittixAutoUpdater.Types;
 
 type
   // Property editor for TUpdaterConfig

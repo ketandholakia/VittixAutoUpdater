@@ -33,6 +33,7 @@ VERSION=${1:-}
 APP_NAME=${2:-}
 SEVERITY=${3:-recommended}
 MIN_VERSION=${4:-}
+MANIFEST_SIGNING_KEY=${MANIFEST_SIGNING_KEY:-}
 
 # Validate arguments
 if [ -z "$VERSION" ] || [ -z "$APP_NAME" ]; then
@@ -122,6 +123,11 @@ echo -e "${GREEN}✓${NC} Checksum calculated"
 
 echo -e "${YELLOW}[4/7]${NC} Generating manifest..."
 
+if [ -z "$MANIFEST_SIGNING_KEY" ]; then
+    echo -e "${RED}Error: set MANIFEST_SIGNING_KEY to a protected ECDSA P-256 PEM key${NC}"
+    exit 1
+fi
+
 # Use Python script to generate manifest
 if [ -f "generate_manifest.py" ]; then
     python3 generate_manifest.py \
@@ -131,22 +137,11 @@ if [ -f "generate_manifest.py" ]; then
         --url "https://${SERVER_HOST}" \
         --severity "$SEVERITY" \
         --min-version "$MIN_VERSION" \
-        --output "${RELEASE_DIR}/${MANIFEST_FILE}"
+        --output "${RELEASE_DIR}/${MANIFEST_FILE}" \
+        --signing-key "$MANIFEST_SIGNING_KEY"
 else
-    # Fallback: Manual manifest creation
-    cat > "${RELEASE_DIR}/${MANIFEST_FILE}" <<EOF
-{
-  "${APP_NAME}": {
-    "version": "${FULL_VERSION}",
-    "download_url": "https://${SERVER_HOST}/releases/${ZIP_FILE}",
-    "file_size": ${FILE_SIZE},
-    "checksum": "sha256:${CHECKSUM}",
-    "release_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "severity": "${SEVERITY}"$([ -n "$MIN_VERSION" ] && echo ",
-    \"min_version\": \"${MIN_VERSION}\"" || echo "")
-  }
-}
-EOF
+    echo -e "${RED}Error: generate_manifest.py is required to sign the manifest${NC}"
+    exit 1
 fi
 
 echo -e "${GREEN}✓${NC} Manifest generated"
@@ -197,6 +192,8 @@ scp "${RELEASE_DIR}/${ZIP_FILE}" \
 echo "  Uploading manifest..."
 scp "${RELEASE_DIR}/${MANIFEST_FILE}" \
     "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/"
+scp "${RELEASE_DIR}/${MANIFEST_FILE}.sig" \
+    "${SERVER_USER}@${SERVER_HOST}:${SERVER_PATH}/"
 
 # Upload release notes
 echo "  Uploading release notes..."
@@ -219,6 +216,14 @@ if [ "$HTTP_CODE" -eq 200 ]; then
     echo -e "${GREEN}✓${NC} Manifest accessible at: $MANIFEST_URL"
 else
     echo -e "${RED}✗${NC} Manifest not accessible (HTTP $HTTP_CODE)"
+    exit 1
+fi
+
+SIGNATURE_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${MANIFEST_URL}.sig")
+if [ "$SIGNATURE_CODE" -eq 200 ]; then
+    echo -e "${GREEN}✓${NC} Manifest signature accessible at: ${MANIFEST_URL}.sig"
+else
+    echo -e "${RED}✗${NC} Manifest signature not accessible (HTTP $SIGNATURE_CODE)"
     exit 1
 fi
 

@@ -39,7 +39,7 @@ VittixAutoUpdater/
 
 - ✅ Delphi 10.x and newer
 - ✅ Free Pascal (FPC) with -Mdelphi mode
-- ✅ Windows, macOS, Linux
+- ✅ Windows only
 
 ## Features
 

@@ -459,7 +459,8 @@ end;
 ```
 
 ### 4. **Privilege Management**
-- Request elevation only when needed
+- Do not elevate an update batch file from a user-writable temporary directory
+- Fail closed for a non-writable install directory until a signed helper exists
 - Run updater with minimal permissions
 - Validate all file paths (prevent directory traversal)
 
@@ -598,22 +599,12 @@ end;
 
 ---
 
-## Platform Considerations
+## Platform Scope
 
-### Windows
-- Use Windows API for file version extraction
-- Handle UAC prompts
-- Support Windows 7+ compatibility
-
-### macOS
-- App bundle structure (.app)
-- Code signing requirements
-- Gatekeeper compatibility
-
-### Linux
-- Package manager integration
-- AppImage self-update
-- Permission handling
+This implementation is supported on Windows only. It uses Windows APIs for
+executable version lookup, file replacement, UAC elevation, CNG signature
+verification, and Authenticode validation. Other platforms are rejected with a
+clear unsupported-platform error.
 
 ---
 
@@ -704,7 +695,7 @@ Building an auto-updater requires careful attention to:
 - **Security**: Verify downloads, use HTTPS
 - **User Experience**: Clear progress indication
 - **Safety**: Always allow rollback
-- **Platform Compatibility**: Handle OS-specific quirks
+- **Windows Compatibility**: Handle Windows-specific behavior and permissions
 
 Start with the core version comparison and manifest system, then build outward to networking and UI layers. Test thoroughly with real-world network conditions and edge cases.
 
@@ -713,9 +704,7 @@ Start with the core version comparison and manifest system, then build outward t
 ## References & Resources
 
 - **Microsoft ClickOnce**: Study deployment strategies
-- **Sparkle Framework** (macOS): Well-designed updater
 - **Squirrel.Windows**: Modern Windows updater
-- **Electron AutoUpdater**: Cross-platform reference
 - **Google Omaha**: Chrome update protocol
 
 ---

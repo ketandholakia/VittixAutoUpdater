@@ -6,7 +6,7 @@ uses
   Windows, Messages, SysUtils, Variants,
   Classes, Graphics, Controls, Forms, Dialogs,
   StdCtrls, ExtCtrls, ComCtrls, Buttons, Spin,
-  CheckLst, Mask,
+  Mask,
   VittixAutoUpdater.Types;
 
 type
@@ -79,12 +79,9 @@ type
 
     GroupSecurity: TGroupBox;
     ChkVerifySignature: TCheckBox;
+    ChkVerifyAuthenticode: TCheckBox;
     ChkVerifyChecksum: TCheckBox;
     ChkRequireHttps: TCheckBox;
-    LblTrustedPublishers: TLabel;
-    ListTrustedPublishers: TCheckListBox;
-    BtnAddPublisher: TButton;
-    BtnRemovePublisher: TButton;
 
     GroupLogging: TGroupBox;
     ChkEnableLogging: TCheckBox;
@@ -122,9 +119,6 @@ type
     procedure BtnBrowseBackupFolderClick(Sender: TObject);
     procedure BtnBrowseLogFileClick(Sender: TObject);
 
-    // Publisher management
-    procedure BtnAddPublisherClick(Sender: TObject);
-    procedure BtnRemovePublisherClick(Sender: TObject);
 
     // Control state management
     procedure ChkUseProxyClick(Sender: TObject);
@@ -169,7 +163,6 @@ uses
 
 class function TUpdateSettingsForm.Execute(var Config: TUpdaterConfig; AOwner: TComponent): Boolean;
 begin
-  Result := False;
   with TUpdateSettingsForm.Create(AOwner) do
   try
     LoadConfig(Config);
@@ -236,6 +229,10 @@ begin
   // Advanced tab
   EditTempFolder.Text := Config.TempFolder;
   // EditBackupFolder.Text := Config.BackupFolder; // If this exists
+  ChkRequireHttps.Checked := Config.RequireHttps;
+  ChkVerifyChecksum.Checked := Config.RequireChecksum;
+  ChkVerifySignature.Checked := Config.VerifyManifestSignature;
+  ChkVerifyAuthenticode.Checked := Config.VerifyAuthenticode;
 
   // Load registry settings for startup
   ChkStartWithWindows.Checked := IsRegisteredForStartup;
@@ -267,6 +264,10 @@ begin
 
   // Advanced tab
   Config.TempFolder := EditTempFolder.Text;
+  Config.RequireHttps := ChkRequireHttps.Checked;
+  Config.RequireChecksum := ChkVerifyChecksum.Checked;
+  Config.VerifyManifestSignature := ChkVerifySignature.Checked;
+  Config.VerifyAuthenticode := ChkVerifyAuthenticode.Checked;
 
   // Handle startup registration
   if ChkStartWithWindows.Checked then
@@ -323,8 +324,6 @@ begin
   LblMaxLogSize.Enabled := ChkEnableLogging.Checked;
   LblLogSizeUnit.Enabled := ChkEnableLogging.Checked;
 
-  // Publisher list management
-  BtnRemovePublisher.Enabled := ListTrustedPublishers.ItemIndex >= 0;
 end;
 
 procedure TUpdateSettingsForm.ValidateSettings;
@@ -350,7 +349,7 @@ begin
 
   // Validate temp folder
   if (Trim(EditTempFolder.Text) <> '') and
-     not DirectoryExists(EditTempFolder.Text) then
+     not SysUtils.DirectoryExists(EditTempFolder.Text) then
     ErrorMsg := ErrorMsg + '- Temp folder does not exist: ' + EditTempFolder.Text + #13#10;
 
   // Validate proxy settings
@@ -564,36 +563,6 @@ begin
   begin
     EditLogFile.Text := SaveDialog.FileName;
     SetModified(True);
-  end;
-end;
-
-// Publisher management
-
-procedure TUpdateSettingsForm.BtnAddPublisherClick(Sender: TObject);
-var
-  Publisher: string;
-begin
-  if InputQuery('Add Trusted Publisher', 'Publisher Name or Certificate Thumbprint:', Publisher) then
-  begin
-    if Trim(Publisher) <> '' then
-    begin
-      ListTrustedPublishers.Items.Add(Publisher);
-      ListTrustedPublishers.Checked[ListTrustedPublishers.Items.Count - 1] := True;
-      SetModified(True);
-    end;
-  end;
-end;
-
-procedure TUpdateSettingsForm.BtnRemovePublisherClick(Sender: TObject);
-var
-  Index: Integer;
-begin
-  Index := ListTrustedPublishers.ItemIndex;
-  if Index >= 0 then
-  begin
-    ListTrustedPublishers.Items.Delete(Index);
-    SetModified(True);
-    UpdateControlStates;
   end;
 end;
 
