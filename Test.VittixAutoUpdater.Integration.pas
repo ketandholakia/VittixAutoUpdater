@@ -1318,7 +1318,7 @@ begin
       if Version >= 2 then
         Assert.AreEqual(25, Updater.Config.MaxArchiveEntryCount);
       if Version < 3 then
-        Assert.AreEqual(0, Length(Updater.Config.PreserveFiles))
+        Assert.AreEqual<NativeInt>(0, Length(Updater.Config.PreserveFiles))
       else
         Assert.AreEqual('config/settings.ini', Updater.Config.PreserveFiles[0]);
     finally
@@ -1964,6 +1964,7 @@ begin
     Updater := TObservedUpdater.Create(Form);
     Updater.Parent := Form;
     Updater.Config := Config;
+    Updater.Engine.CurrentVersion := TAppVersion.Create('1.0.0.0');
     Updater.Engine.EnableLoopbackHttpForTests;
     Updater.OnStateChange := Observer.StateChanged;
     Updater.CheckForUpdates;
@@ -2045,6 +2046,7 @@ begin
     end;
     Updater.Parent := Form;
     Updater.Config := Config;
+    Updater.Engine.CurrentVersion := TAppVersion.Create('1.0.0.0');
     Updater.Engine.EnableLoopbackHttpForTests;
     Updater.OnStateChange := Observer.StateChanged;
     Updater.OnUpdateDecision := Observer.Decision;
@@ -2064,6 +2066,7 @@ begin
     Updater := TObservedUpdater.Create(Form);
     Updater.Parent := Form;
     Updater.Config := Config;
+    Updater.Engine.CurrentVersion := TAppVersion.Create('1.0.0.0');
     Updater.Engine.EnableLoopbackHttpForTests;
     Updater.OnStateChange := Observer.StateChanged;
     Updater.OnUpdateDecision := Observer.Decision;

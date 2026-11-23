@@ -52,7 +52,7 @@ type
     [Test] procedure ArchiveLimitsHaveSecureDefaults;
 {$IFDEF VITTIX_TEST_LOOPBACK}
     [Test] procedure ZipExtractionAcceptsSafeAndRejectsTraversalArchives;
-    [Test] procedure ZipExtractionRejectsPathConflictsInBothOrders;
+    [Test] procedure ZipExtractionUsesWindowsOrdinalPathConflicts;
     [Test] procedure ZipPreflightRejectsMalformedAndAmbiguousArchives;
     [Test] procedure ZipResourceLimitsEnforceBoundaries;
     [Test] procedure ZipExtractionRejectsReparsePointAncestorBeforeWrites;
@@ -90,6 +90,7 @@ type
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
     [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
     [Test] procedure ApplyScriptBacksUpRestoresAndPreservesFiles;
+    [Test] procedure ApplyScriptCompletesTwiceAndRollsBackPartialCopy;
   end;
 
 implementation
@@ -1240,13 +1241,13 @@ begin
   TDirectory.Delete(TempRoot, True);
 end;
 
-procedure TVittixAutoUpdaterTests.ZipExtractionRejectsPathConflictsInBothOrders;
+procedure TVittixAutoUpdaterTests.ZipExtractionUsesWindowsOrdinalPathConflicts;
 var
   Root, ArchiveName, Destination: string;
   Engine: TUpdateEngine;
   Payload: TBytes;
 
-  procedure AssertConflict(const First, Second: string);
+  procedure WriteArchive(const First, Second: string);
   var
     Zip: TZipFile;
   begin
@@ -1259,6 +1260,11 @@ var
     finally
       Zip.Free;
     end;
+  end;
+
+  procedure AssertConflict(const First, Second: string);
+  begin
+    WriteArchive(First, Second);
     Assert.IsFalse(Engine.ExtractArchiveForTests(ArchiveName, Destination),
       First + ' conflicts with ' + Second);
     Assert.IsFalse(TDirectory.Exists(Destination));
@@ -1276,6 +1282,10 @@ begin
     AssertConflict('dir', 'DIR/file.txt');
     AssertConflict('DIR/file.txt', 'dir');
     AssertConflict(#$00E5 + '.txt', #$00C5 + '.TXT');
+    WriteArchive(#$00C5 + '.txt', 'A' + #$030A + '.txt');
+    Assert.IsTrue(Engine.ExtractArchiveForTests(ArchiveName, Destination),
+      'Composed and decomposed names are distinct under Windows ordinal rules');
+    Assert.AreEqual<NativeInt>(2, Length(TDirectory.GetFiles(Destination)));
   finally
     Engine.Free;
     TDirectory.Delete(Root, True);
@@ -2026,11 +2036,41 @@ begin
 end;
 {$ENDIF}
 
-procedure TVittixAutoUpdaterTests.BatchCopyIntegrationHandlesWindowsMetacharacters;
+function RunBatchScript(const ScriptPath: string; out Output: string): DWORD;
 var
-  Root, SourcePath, DestinationPath, ScriptPath, CommandLine, SourceFile: string;
+  CommandLine, LogPath: string;
   StartupInfo: TStartupInfo;
   ProcessInfo: TProcessInformation;
+begin
+  FillChar(StartupInfo, SizeOf(StartupInfo), 0);
+  StartupInfo.cb := SizeOf(StartupInfo);
+  StartupInfo.dwFlags := STARTF_USESHOWWINDOW;
+  StartupInfo.wShowWindow := SW_HIDE;
+  FillChar(ProcessInfo, SizeOf(ProcessInfo), 0);
+  LogPath := ScriptPath + '.log';
+  CommandLine := Format('cmd.exe /d /c ""%s" > "%s" 2>&1"', [ScriptPath, LogPath]);
+  Assert.IsTrue(CreateProcess(nil, PChar(CommandLine), nil, nil, False,
+    CREATE_NEW_CONSOLE, nil, nil, StartupInfo, ProcessInfo),
+    'Could not start the generated copy script');
+  try
+    Assert.AreEqual< DWORD >(WAIT_OBJECT_0,
+      WaitForSingleObject(ProcessInfo.hProcess, 30000));
+    Assert.IsTrue(GetExitCodeProcess(ProcessInfo.hProcess, Result));
+  finally
+    CloseHandle(ProcessInfo.hThread);
+    CloseHandle(ProcessInfo.hProcess);
+  end;
+  Output := '';
+  if FileExists(LogPath) then
+  begin
+    Output := TFile.ReadAllText(LogPath, TEncoding.ANSI);
+    TFile.Delete(LogPath);
+  end;
+end;
+
+procedure TVittixAutoUpdaterTests.BatchCopyIntegrationHandlesWindowsMetacharacters;
+var
+  Root, SourcePath, DestinationPath, ScriptPath, SourceFile, Output: string;
   ExitCode: DWORD;
   Script: TStringList;
 begin
@@ -2052,22 +2092,8 @@ begin
     Script.Free;
   end;
   try
-    FillChar(StartupInfo, SizeOf(StartupInfo), 0);
-    StartupInfo.cb := SizeOf(StartupInfo);
-    FillChar(ProcessInfo, SizeOf(ProcessInfo), 0);
-    CommandLine := Format('cmd.exe /d /c ""%s""', [ScriptPath]);
-    Assert.IsTrue(CreateProcess(nil, PChar(CommandLine), nil, nil, False,
-      CREATE_NO_WINDOW, nil, nil, StartupInfo, ProcessInfo),
-      'Could not start the generated copy script');
-    try
-      Assert.AreEqual< DWORD >(WAIT_OBJECT_0,
-        WaitForSingleObject(ProcessInfo.hProcess, 30000));
-      Assert.IsTrue(GetExitCodeProcess(ProcessInfo.hProcess, ExitCode));
-      Assert.AreEqual<DWORD>(0, ExitCode);
-    finally
-      CloseHandle(ProcessInfo.hThread);
-      CloseHandle(ProcessInfo.hProcess);
-    end;
+    ExitCode := RunBatchScript(ScriptPath, Output);
+    Assert.AreEqual<DWORD>(0, ExitCode, Output);
     Assert.IsTrue(TFile.Exists(TPath.Combine(DestinationPath, 'payload.txt')));
     Assert.AreEqual('copy integration payload',
       TFile.ReadAllText(TPath.Combine(DestinationPath, 'payload.txt')));
@@ -2093,6 +2119,7 @@ begin
   CheckAt := Pos('if not exist "C:\App\App.exe" goto RENAMED', Script);
   Assert.IsTrue(Pos(':WAITLOOP', Script) > 0);
   Assert.IsTrue(DeleteAt > Pos(':WAITLOOP', Script));
+  Assert.IsTrue(Pos('if exist "C:\App\App.exe.old\" goto RENAME_FAILED', Script) > 0);
   Assert.IsTrue(RenameAt > DeleteAt);
   Assert.IsTrue(CheckAt > RenameAt);
 end;
@@ -2143,6 +2170,83 @@ begin
     Assert.IsTrue(RollbackExecutable(CurrentExe));
     Assert.AreEqual('previous', TFile.ReadAllText(CurrentExe));
     Assert.IsFalse(FileExists(BackupExe));
+  finally
+    TDirectory.Delete(Root, True);
+  end;
+end;
+
+procedure TVittixAutoUpdaterTests.ApplyScriptCompletesTwiceAndRollsBackPartialCopy;
+var
+  Root, AppDir, AppExe, StageDir, SourceDir, ScriptPath, Script: string;
+  ConfigPath, LockedPath, Output: string;
+  ExitCode: DWORD;
+  Payload: TArray<string>;
+  LockedFile: TFileStream;
+
+  procedure WritePayload(const Version: string);
+  begin
+    TDirectory.CreateDirectory(TPath.Combine(SourceDir, 'config'));
+    TFile.WriteAllText(TPath.Combine(SourceDir, 'App.exe'), Version);
+    TFile.WriteAllText(TPath.Combine(SourceDir, 'other.txt'), Version + ' data');
+    TFile.WriteAllText(TPath.Combine(SourceDir, 'locked.txt'), Version + ' locked');
+    TFile.WriteAllText(TPath.Combine(SourceDir, 'config\settings.ini'), 'payload settings');
+  end;
+
+  function Apply: DWORD;
+  begin
+    Script := BuildApplyScript(AppExe, SourceDir, AppDir, Payload, ['config/settings.ini']);
+    // Use inert files in this test. The Windows helper commands are otherwise unchanged.
+    Script := StringReplace(Script, 'start "" "', 'rem test restart "', [rfReplaceAll]);
+    TFile.WriteAllBytes(ScriptPath, TEncoding.UTF8.GetBytes(Script));
+    Result := RunBatchScript(ScriptPath, Output);
+  end;
+
+begin
+  Root := TPath.Combine(TPath.GetTempPath, TPath.GetRandomFileName);
+  AppDir := TPath.Combine(Root, 'My ' + #$00E9 + ' App');
+  AppExe := TPath.Combine(AppDir, 'App.exe');
+  ConfigPath := TPath.Combine(AppDir, 'config\settings.ini');
+  LockedPath := TPath.Combine(AppDir, 'locked.txt');
+  StageDir := TPath.Combine(Root, 'stage');
+  SourceDir := TPath.Combine(StageDir, 'payload');
+  ScriptPath := TPath.Combine(StageDir, 'apply.cmd');
+  TDirectory.CreateDirectory(TPath.Combine(AppDir, 'config'));
+  try
+    TFile.WriteAllText(AppExe, 'A');
+    TFile.WriteAllText(TPath.Combine(AppDir, 'other.txt'), 'A data');
+    TFile.WriteAllText(LockedPath, 'A locked');
+    TFile.WriteAllText(ConfigPath, 'local settings');
+    Payload := TArray<string>.Create('App.exe', 'other.txt', 'locked.txt', 'config\settings.ini');
+
+    WritePayload('B');
+    ExitCode := Apply;
+    Assert.AreEqual<DWORD>(0, ExitCode, 'B' + sLineBreak + Output);
+    Assert.AreEqual('B', TFile.ReadAllText(AppExe));
+    Assert.AreEqual('A', TFile.ReadAllText(AppExe + '.old'));
+    Assert.AreEqual('local settings', TFile.ReadAllText(ConfigPath));
+
+    WritePayload('C');
+    ExitCode := Apply;
+    Assert.AreEqual<DWORD>(0, ExitCode, 'C' + sLineBreak + Output);
+    Assert.AreEqual('C', TFile.ReadAllText(AppExe));
+    Assert.AreEqual('B', TFile.ReadAllText(AppExe + '.old'));
+
+    WritePayload('D');
+    TFile.WriteAllText(TPath.Combine(SourceDir, 'added.txt'), 'new file');
+    Payload := TArray<string>.Create('App.exe', 'other.txt', 'added.txt',
+      'locked.txt', 'config\settings.ini');
+    LockedFile := TFileStream.Create(LockedPath, fmOpenRead or fmShareDenyWrite);
+    try
+      ExitCode := Apply;
+      Assert.AreEqual<DWORD>(1, ExitCode, Output);
+    finally
+      LockedFile.Free;
+    end;
+    Assert.AreEqual('C', TFile.ReadAllText(AppExe));
+    Assert.AreEqual('C data', TFile.ReadAllText(TPath.Combine(AppDir, 'other.txt')));
+    Assert.AreEqual('C locked', TFile.ReadAllText(LockedPath));
+    Assert.AreEqual('local settings', TFile.ReadAllText(ConfigPath));
+    Assert.IsFalse(FileExists(TPath.Combine(AppDir, 'added.txt')));
   finally
     TDirectory.Delete(Root, True);
   end;

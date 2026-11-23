@@ -890,7 +890,7 @@ var
   CurrentTick: Cardinal;
   SizeMargin: Int64;
 begin
-  Abort := IsCancelled;
+  Abort := Abort or IsCancelled;
   if Abort then
     Exit;
   CurrentTick := Cardinal(GetTickCount64);
@@ -924,7 +924,7 @@ begin
     FLastProgressTick := CurrentTick;
     if Abort then
       CancelCurrentOperation;
-    Abort := IsCancelled;
+    Abort := Abort or IsCancelled;
   end;
 end;
 
@@ -949,7 +949,7 @@ end;
 
 function TUpdateNetworkManager.IsCancelled: Boolean;
 begin
-  Result := TInterlocked.Read(FCancelDownload) <> 0;
+  Result := TInterlocked.CompareExchange(FCancelDownload, 0, 0) <> 0;
 end;
 
 procedure TUpdateNetworkManager.CancelCurrentOperation;
@@ -1114,19 +1114,18 @@ begin
         if IsCancelled then
           Break;
 
-        Client := THttpClient(CreateHttpClient);
+        Client := nil;
         try
-          Client.HandleRedirects := not FRequireHttps;
-
-          Stream.Size := 0;
-          Stream.Position := 0;
-          FExpectedDownloadSize := 1024 * 1024 - 64 * 1024;
-          FDownloadOffset := 0;
-          FSizeLimitExceeded := False;
-          FOnProgress := nil;
-          Client.OnReceiveData := ReceiveDataHandler;
-
           try
+            FSizeLimitExceeded := False;
+            Client := THttpClient(CreateHttpClient);
+
+            Stream.Size := 0;
+            Stream.Position := 0;
+            FExpectedDownloadSize := 1024 * 1024 - 64 * 1024;
+            FDownloadOffset := 0;
+            FOnProgress := nil;
+            Client.OnReceiveData := ReceiveDataHandler;
             Response := HttpGetFollowingSecureRedirects(
               Client, Url, Stream, FRequireHttps, nil,
               LoopbackHttpAllowedForTests);
@@ -1192,17 +1191,22 @@ begin
           except
             on E: Exception do
             begin
-              FLastError := E.Message;
+              if FSizeLimitExceeded then
+                FLastError := 'HTTP response exceeds its configured size limit'
+              else
+                FLastError := E.Message;
               Log(Format('Manifest attempt %d failed: %s',
-                [Retry, E.Message]));
+                [Retry, FLastError]));
 
-              if (E is ENetworkFatalException) or (Retry = FMaxRetries) then
+              if (E is ENetworkFatalException) or FSizeLimitExceeded or
+                 (Retry = FMaxRetries) then
                 Break;
 
               WaitBeforeRetry(1000 * Retry);
             end;
           end;
         finally
+          Response := nil;
           Client.Free;
         end;
       end;

@@ -775,6 +775,7 @@ begin
     Lines.Add('set VAU_LAST=-1');
     Lines.Add('set RETRIES=0');
     Lines.Add(':WAITLOOP');
+    Lines.Add(Format('if exist "%s.old\" goto RENAME_FAILED', [BatchPath(AppExe)]));
     Lines.Add(Format('del /f /q "%s.old" 2>nul', [BatchPath(AppExe)]));
     Lines.Add(Format('ren "%s" "%s.old" 2>nul',
       [BatchPath(AppExe), BatchPath(ExeName)]));
@@ -852,11 +853,11 @@ begin
     Lines.AddStrings(Install);
     Lines.Add(Format('if not exist "%s" goto COPY_FAILED', [BatchPath(AppExe)]));
     Lines.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
-    Lines.Add(Format('del "%s"', [BatchPath(Stage + 'package.zip')]));
+    Lines.Add(Format('if exist "%0:s" del "%0:s"', [BatchPath(Stage + 'package.zip')]));
     Lines.Add(Format('rd /s /q "%s"', [BatchPath(SourcePath)]));
     Lines.Add(Format('rd /s /q "%s"', [BatchPath(BackupRoot)]));
-    Lines.Add('del "%~f0"');
-    Lines.Add('exit /b 0');
+    // Leave the batch context before removing its source file.
+    Lines.Add('(goto) 2>nul & del "%~f0" & exit /b 0');
     Lines.Add(':COPY_FAILED');
     Lines.Add(Format('if exist "%0:s" del /f /q "%0:s" 2>nul', [BatchPath(AppExe)]));
     Lines.AddStrings(Restore);
@@ -1143,7 +1144,7 @@ end;
 
 function TUpdateEngine.CancelRequested: Boolean;
 begin
-  Result := TInterlocked.Read(FCancelRequested) <> 0;
+  Result := TInterlocked.CompareExchange(FCancelRequested, 0, 0) <> 0;
 end;
 
 procedure TUpdateEngine.PrepareCancellation;
@@ -1171,7 +1172,7 @@ begin
   try
     if FQueuedEvents.Count = 0 then
       Exit;
-    Action := FQueuedEvents.Dequeue;
+    Action := FQueuedEvents.Dequeue();
   finally
     FStateLock.Release;
   end;
@@ -1251,18 +1252,21 @@ end;
 
 procedure TUpdateEngine.QueueCheckCompletion(OperationGeneration: Int64;
   const Action: TThreadProcedure);
+var
+  QueuedAction, Completion: TThreadProcedure;
 begin
   // Completion must not block the worker on a main-thread Synchronize call.
   // A consumer may immediately start the next check from the terminal
   // callback; it can safely wait for this worker because it no longer needs
   // the main thread to return.
-  TThread.Queue(FCheckThread,
-    procedure
+  QueuedAction := Action;
+  Completion := procedure
     begin
       if OperationGeneration <> TInterlocked.Read(FCheckOperationGeneration) then
         Exit;
-      Action();
-    end);
+      QueuedAction();
+    end;
+  TThread.Queue(FCheckThread, Completion);
 end;
 
 function TUpdateEngine.GetTempZipFile: string;
@@ -1628,6 +1632,8 @@ const
   FileEntry = 'F';
   ExplicitDirectory = 'D';
   ImplicitDirectory = 'I';
+  HexDigits = '0123456789ABCDEF';
+  KeyCharsPerCodeUnit = 4;
 type
   TPlannedEntry = record
     Name: string;
@@ -1640,7 +1646,8 @@ var
   ZipArchive: TZipFile;
   ZipCancellationObserver: TZipCancellationObserver;
   Entries: TArray<TPlannedEntry>;
-  EntryName, EntryPath, ParentPath, CurrentKey, ExistingKind: string;
+  EntryName, EntryPath, ParentPath, RelativePath, CurrentKey, ParentKey,
+    ExistingKind: string;
   I, J, Depth: Integer;
   PreflightCount: Integer;
   Header: TZipHeader;
@@ -1654,6 +1661,25 @@ var
   Attr: DWORD;
   UnixMode: UInt32;
   AvailableBytes, TotalBytes, TotalFreeBytes: UInt64;
+
+  function OrdinalPathKey(const Path: string): string;
+  var
+    Index, Offset, CodeUnit: Integer;
+  begin
+    // The RTL comparer uses a linguistic equality test on some Delphi versions.
+    // Encode the Windows ordinal uppercase form as invariant hex instead.
+    SetLength(Result, Length(Path) * KeyCharsPerCodeUnit);
+    Offset := 0;
+    for Index := 1 to Length(Path) do
+    begin
+      CodeUnit := Ord(RtlUpcaseUnicodeChar(Path[Index]));
+      Result[Offset + 1] := HexDigits[(CodeUnit shr 12) + 1];
+      Result[Offset + 2] := HexDigits[((CodeUnit shr 8) and $F) + 1];
+      Result[Offset + 3] := HexDigits[((CodeUnit shr 4) and $F) + 1];
+      Result[Offset + 4] := HexDigits[(CodeUnit and $F) + 1];
+      Inc(Offset, KeyCharsPerCodeUnit);
+    end;
+  end;
 
   procedure EnsureSafeDirectories(const Root, Target: string);
   var
@@ -1797,13 +1823,9 @@ begin
           if (Depth > FConfig.MaxArchivePathDepth) or
              ((Length(EntryName) - Ord(IsDirectory)) > FConfig.MaxArchivePathLength) then
             raise EFileSystemException.Create('ZIP entry path exceeds configured limits');
-          CurrentKey := StringReplace(EntryName, '/', '\', [rfReplaceAll]);
-          if (CurrentKey <> '') and (CurrentKey[Length(CurrentKey)] = '\') then
-            Delete(CurrentKey, Length(CurrentKey), 1);
-          // Match Windows ordinal casing for non-ASCII names as well as ASCII.
-          for J := 1 to Length(CurrentKey) do
-            if Ord(CurrentKey[J]) > 127 then
-              CurrentKey[J] := RtlUpcaseUnicodeChar(CurrentKey[J]);
+          RelativePath := ExcludeTrailingPathDelimiter(
+            StringReplace(EntryName, '/', '\', [rfReplaceAll]));
+          CurrentKey := OrdinalPathKey(RelativePath);
 
           if Paths.TryGetValue(CurrentKey, ExistingKind) then
           begin
@@ -1814,11 +1836,12 @@ begin
           end;
           Paths.AddOrSetValue(CurrentKey, IfThen(IsDirectory, ExplicitDirectory, FileEntry));
 
-          ParentPath := ExtractFileDir(CurrentKey);
+          ParentPath := ExtractFileDir(RelativePath);
           while (ParentPath <> '.') and (ParentPath <> '') do
           begin
-            if not Paths.TryGetValue(ParentPath, ExistingKind) then
-              Paths.Add(ParentPath, ImplicitDirectory)
+            ParentKey := Copy(CurrentKey, 1, Length(ParentPath) * KeyCharsPerCodeUnit);
+            if not Paths.TryGetValue(ParentKey, ExistingKind) then
+              Paths.Add(ParentKey, ImplicitDirectory)
             else if ExistingKind = FileEntry then
               raise EFileSystemException.Create('ZIP file entry conflicts with a parent directory');
             ParentPath := ExtractFileDir(ParentPath);
@@ -2068,8 +2091,13 @@ var
   AppExe, NewExe, AppDir: string;
   TempName: array[0..MAX_PATH] of Char;
   CanWriteAppDir: Boolean;
+  BackupAttributes: DWORD;
 begin
   AppExe := ParamStr(0);
+  BackupAttributes := GetFileAttributes(PChar(AppExe + '.old'));
+  if (BackupAttributes <> INVALID_FILE_ATTRIBUTES) and
+     ((BackupAttributes and (FILE_ATTRIBUTE_DIRECTORY or FILE_ATTRIBUTE_REPARSE_POINT)) <> 0) then
+    raise EFileSystemException.Create('Executable backup path is not a regular file');
   NewExe :=
     IncludeTrailingPathDelimiter(SourcePath) +
     ExtractFileName(AppExe);
@@ -2165,6 +2193,8 @@ begin
   CleanupTempFiles;
   FLastManifest := TUpdateManifest.Empty;
   FResetPending := False;
+  if not Assigned(FCheckThread) or FCheckThread.Finished then
+    PrepareCancellation;
   FState := usIdle;
 end;
 
