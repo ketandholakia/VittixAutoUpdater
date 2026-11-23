@@ -39,6 +39,19 @@ function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): strin
 function BuildApplyScript(const AppExe, SourcePath, AppDir: string;
   const PayloadFiles, PreserveFiles: TArray<string>): string;
 
+const
+  UnsupportedUncInstall = 'Updates from UNC or extended Windows paths are not supported. Use a writable local installation.';
+  UnsupportedNetworkInstall = 'Updates from network drives are not supported. Install under %LOCALAPPDATA%\Programs\<AppName>.';
+
+type
+  TInstallDriveTypeLookup = function(const RootPath: string): Cardinal;
+
+function CheckInstallLocation(const ExePath: string; out ErrorMessage: string): Boolean; overload;
+{$IFDEF VITTIX_TEST_LOOPBACK}
+function CheckInstallLocation(const ExePath: string; out ErrorMessage: string;
+  DriveTypeLookup: TInstallDriveTypeLookup): Boolean; overload;
+{$ENDIF}
+
 {$IFDEF VITTIX_TEST_REGISTRY}
 procedure SetRollbackRegistryTestScope(const KeyName: string);
 procedure SetRollbackRegistryTestAccessFailure(Value: Boolean);
@@ -48,6 +61,10 @@ type
   TUpdateEngine = class
   private
     FConfig: TUpdaterConfig;
+{$IFDEF VITTIX_TEST_LOOPBACK}
+    FInstallDriveTypeForTests: TInstallDriveTypeLookup;
+{$ENDIF}
+    function CheckRunningInstallLocation(out ErrorMessage: string): Boolean;
     FNetwork: TUpdateNetworkManager;
     FCurrentVersion: TAppVersion;
     FHasCurrentVersion: Boolean;
@@ -116,7 +133,9 @@ type
     destructor Destroy; override;
 
     procedure CheckForUpdate(Callback: TUpdateCheckCallback);
-    function DownloadUpdate(const Manifest: TUpdateManifest): Boolean;
+    function DownloadUpdate(const Manifest: TUpdateManifest): Boolean; overload;
+    function DownloadUpdate(const Manifest: TUpdateManifest;
+      out ErrorMessage: string): Boolean; overload;
     function ApplyUpdate: Boolean; overload;
     function ApplyUpdate(out ErrorMessage: string): Boolean; overload;
 
@@ -127,6 +146,8 @@ type
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
     procedure EnableLoopbackHttpForTests;
+    property InstallDriveTypeForTests: TInstallDriveTypeLookup
+      read FInstallDriveTypeForTests write FInstallDriveTypeForTests;
     procedure SetCurrentVersionFromFileForTests(const FileName: string);
     function WaitForCheckWorkerForTests(Timeout: Cardinal): Boolean;
     function ExtractArchiveForTests(const ZipFile, DestPath: string): Boolean;
@@ -1328,6 +1349,37 @@ begin
   FStagingBase := '';
 end;
 
+function WindowsInstallDriveType(const RootPath: string): Cardinal;
+begin
+  Result := GetDriveType(PChar(RootPath));
+end;
+
+function CheckInstallLocation(const ExePath: string; out ErrorMessage: string;
+  DriveTypeLookup: TInstallDriveTypeLookup): Boolean; overload;
+begin
+  ErrorMessage := '';
+  if Copy(ExePath, 1, 2) = '\\' then
+    ErrorMessage := UnsupportedUncInstall
+  else if (Length(ExePath) >= 3) and (ExePath[2] = ':') and
+    (DriveTypeLookup(Copy(ExePath, 1, 2) + '\') = DRIVE_REMOTE) then
+    ErrorMessage := UnsupportedNetworkInstall;
+  Result := ErrorMessage = '';
+end;
+
+function CheckInstallLocation(const ExePath: string; out ErrorMessage: string): Boolean;
+begin
+  Result := CheckInstallLocation(ExePath, ErrorMessage, WindowsInstallDriveType);
+end;
+
+function TUpdateEngine.CheckRunningInstallLocation(out ErrorMessage: string): Boolean;
+begin
+{$IFDEF VITTIX_TEST_LOOPBACK}
+  if Assigned(FInstallDriveTypeForTests) then
+    Exit(CheckInstallLocation(ParamStr(0), ErrorMessage, FInstallDriveTypeForTests));
+{$ENDIF}
+  Result := CheckInstallLocation(ParamStr(0), ErrorMessage);
+end;
+
 procedure TUpdateEngine.CheckForUpdate(Callback: TUpdateCheckCallback);
 var
   ErrorMsg, TrustedKey: string;
@@ -1342,6 +1394,15 @@ begin
     // therefore safe even when this call is made from the completion callback.
     FCheckThread.WaitFor;
     FreeAndNil(FCheckThread);
+  end;
+
+  if not CheckRunningInstallLocation(ErrorMsg) then
+  begin
+    PrepareCancellation;
+    SetState(usFailed, ErrorMsg);
+    if Assigned(Callback) then
+      Callback(ucrError, TUpdateManifest.Empty, ErrorMsg);
+    Exit;
   end;
 
   if (not FConfig.VerifyManifestSignature) and
@@ -1582,8 +1643,17 @@ begin
 end;
 
 function TUpdateEngine.DownloadUpdate(const Manifest: TUpdateManifest): Boolean;
+var
+  ErrorMessage: string;
+begin
+  Result := DownloadUpdate(Manifest, ErrorMessage);
+end;
+
+function TUpdateEngine.DownloadUpdate(const Manifest: TUpdateManifest;
+  out ErrorMessage: string): Boolean;
 begin
   Result := False;
+  ErrorMessage := '';
 
   FStateLock.Acquire;
   try
@@ -1597,9 +1667,15 @@ begin
   end;
 
   try
+    if not CheckRunningInstallLocation(ErrorMessage) then
+    begin
+      SetState(usFailed, ErrorMessage);
+      Exit;
+    end;
     if FConfig.RequireChecksum and (Trim(Manifest.Checksum) = '') then
     begin
-      SetState(usFailed, 'Manifest has no checksum - refusing to download unverifiable update');
+      ErrorMessage := 'Manifest has no checksum - refusing to download unverifiable update';
+      SetState(usFailed, ErrorMessage);
       Exit;
     end;
 
@@ -1631,14 +1707,18 @@ begin
         if CancelRequested then
           SetState(usCancelled, 'Download cancelled')
         else
-          SetState(usFailed, 'Download failed');
+        begin
+          ErrorMessage := 'Download failed';
+          SetState(usFailed, ErrorMessage);
+        end;
         CleanupTempFiles;
       end;
 
     except
       on E: Exception do
       begin
-        SetState(usFailed, 'Download error: ' + E.Message);
+        ErrorMessage := 'Download error: ' + E.Message;
+        SetState(usFailed, ErrorMessage);
         CleanupTempFiles;
         Result := False;
       end;
@@ -2136,15 +2216,14 @@ var
   UpdateFiles, PayloadFiles: TArray<string>;
   I, SourcePrefixLength: Integer;
   UpdateFile, Destination, ExistingPath: string;
-  AppExe, NewExe, AppDir: string;
+  AppExe, NewExe, AppDir, ErrorMsg: string;
   TempName: array[0..MAX_PATH] of Char;
   CanWriteAppDir: Boolean;
   BackupAttributes: DWORD;
 begin
   AppExe := ParamStr(0);
-  if Copy(AppExe, 1, 2) = '\\' then
-    raise EFileSystemException.Create(
-      'Updates from UNC or extended Windows paths are not supported. Use a writable local installation.');
+  if not CheckRunningInstallLocation(ErrorMsg) then
+    raise EFileSystemException.Create(ErrorMsg);
   BackupAttributes := GetFileAttributes(PChar(AppExe + '.old'));
   if (BackupAttributes <> INVALID_FILE_ATTRIBUTES) and
      ((BackupAttributes and (FILE_ATTRIBUTE_DIRECTORY or FILE_ATTRIBUTE_REPARSE_POINT)) <> 0) then

@@ -82,6 +82,8 @@ type
     [Test] procedure AuthenticodeFixtureThumbprintAndPins;
 {$ENDIF}
 {$IFDEF VITTIX_TEST_LOOPBACK}
+    [Test] procedure InstallLocationRejectsUncAndMappedDrives;
+    [Test] procedure UnsupportedInstallLocationSkipsNetworkAndStaging;
     [Test] procedure LoopbackHttpDownloadRetryResumeAndRedirects;
     [Test] procedure SignedManifestFetchRejectsTamperingAndUnknownKeys;
     [Test] procedure ManifestHttp404IsLoggedAndRetried;
@@ -738,6 +740,7 @@ type
     FMismatchDropCount: Integer;
     FMismatchRangeCount: Integer;
     FFullAfterMismatchCount: Integer;
+    FRequestCount: Integer;
     procedure HandleRequest(AContext: TIdContext;
       ARequestInfo: TIdHTTPRequestInfo; AResponseInfo: TIdHTTPResponseInfo);
     procedure SendDrop(AContext: TIdContext; AResponseInfo: TIdHTTPResponseInfo);
@@ -754,6 +757,7 @@ type
     property ResumeCount: Integer read FResumeCount;
     property MismatchRangeCount: Integer read FMismatchRangeCount;
     property FullAfterMismatchCount: Integer read FFullAfterMismatchCount;
+    property RequestCount: Integer read FRequestCount;
   end;
 {$ENDIF}
 
@@ -858,6 +862,7 @@ var
 
 begin
   Document := ARequestInfo.Document;
+  TInterlocked.Increment(FRequestCount);
   IsHead := ARequestInfo.CommandType = hcHEAD;
   IsResumeRoute := SameText(Document, '/resume');
   IsMismatchRoute := SameText(Document, '/mismatch');
@@ -1818,6 +1823,100 @@ end;
 {$ENDIF}
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
+function FixedInstallDrive(const RootPath: string): Cardinal;
+begin
+  Result := DRIVE_FIXED;
+end;
+
+function RemovableInstallDrive(const RootPath: string): Cardinal;
+begin
+  Result := DRIVE_REMOVABLE;
+end;
+
+function RemoteInstallDrive(const RootPath: string): Cardinal;
+begin
+  Assert.AreEqual(3, Length(RootPath));
+  Assert.AreEqual(':\', Copy(RootPath, 2, 2));
+  Result := DRIVE_REMOTE;
+end;
+
+procedure TVittixAutoUpdaterTests.InstallLocationRejectsUncAndMappedDrives;
+var
+  ErrorMessage: string;
+begin
+  Assert.IsFalse(CheckInstallLocation('\\server\share\x', ErrorMessage));
+  Assert.AreEqual('Updates from UNC or extended Windows paths are not supported. Use a writable local installation.', ErrorMessage);
+  Assert.IsFalse(CheckInstallLocation('\\?\C:\x', ErrorMessage));
+  Assert.AreEqual(UnsupportedUncInstall, ErrorMessage);
+  Assert.IsTrue(CheckInstallLocation('C:\x', ErrorMessage, FixedInstallDrive));
+  Assert.AreEqual('', ErrorMessage);
+  Assert.IsTrue(CheckInstallLocation('E:\x', ErrorMessage, RemovableInstallDrive));
+  Assert.IsFalse(CheckInstallLocation('Z:\x', ErrorMessage, RemoteInstallDrive));
+  Assert.AreEqual('Updates from network drives are not supported. Install under %LOCALAPPDATA%\Programs\<AppName>.', ErrorMessage);
+end;
+
+procedure TVittixAutoUpdaterTests.UnsupportedInstallLocationSkipsNetworkAndStaging;
+var
+  Server: TLoopbackUpdateServer;
+  Engine: TUpdateEngine;
+  Config: TUpdaterConfig;
+  Manifest: TUpdateManifest;
+  Checked: Boolean;
+  RequestsBeforeDownload: Integer;
+begin
+  Server := TLoopbackUpdateServer.Create;
+  try
+    Config := TUpdaterConfig.Default;
+    Config.AppName := 'Demo';
+    Config.ManifestUrls := [Server.Url('/signed-manifest')];
+    Config.VerifyManifestSignature := False;
+    Config.AllowInsecureUnsignedManifests := True;
+    Config.MaxManifestAgeDays := 36500;
+    Config.TempFolder := TPath.Combine(TPath.GetTempPath, TPath.GetRandomFileName);
+    Engine := TUpdateEngine.Create(Config);
+    try
+      Engine.EnableLoopbackHttpForTests;
+      Engine.CurrentVersion := TAppVersion.Create('1.0.0.0');
+      Engine.InstallDriveTypeForTests := RemoteInstallDrive;
+      Checked := False;
+      Engine.CheckForUpdate(
+        procedure(CheckResult: TUpdateCheckResult; const Update: TUpdateManifest;
+          const ErrorMessage: string)
+        begin
+          Assert.AreEqual<TUpdateCheckResult>(ucrError, CheckResult);
+          Assert.AreEqual(UnsupportedNetworkInstall, ErrorMessage);
+          Checked := True;
+        end);
+      Assert.IsTrue(Checked);
+      Assert.AreEqual<TUpdateState>(usFailed, Engine.State);
+      Assert.AreEqual(0, Server.RequestCount);
+      Assert.IsFalse(TDirectory.Exists(Config.TempFolder));
+
+      Engine.InstallDriveTypeForTests := FixedInstallDrive;
+      Engine.CheckForUpdate(nil);
+      Assert.IsTrue(Engine.WaitForCheckWorkerForTests(5000));
+      CheckSynchronize;
+      Assert.AreEqual<TUpdateState>(usAvailable, Engine.State);
+      Manifest := Engine.LastManifest;
+      Manifest.DownloadUrl := Server.Url('/success');
+      RequestsBeforeDownload := Server.RequestCount;
+      Assert.IsTrue(RequestsBeforeDownload > 0);
+
+      Engine.InstallDriveTypeForTests := RemoteInstallDrive;
+      Assert.IsFalse(Engine.DownloadUpdate(Manifest));
+      Assert.AreEqual<TUpdateState>(usFailed, Engine.State);
+      Assert.AreEqual(RequestsBeforeDownload, Server.RequestCount);
+      Assert.IsFalse(TDirectory.Exists(Config.TempFolder));
+    finally
+      Engine.Free;
+    end;
+  finally
+    if TDirectory.Exists(Config.TempFolder) then
+      TDirectory.Delete(Config.TempFolder, True);
+    Server.Free;
+  end;
+end;
+
 procedure TVittixAutoUpdaterTests.LoopbackHttpDownloadRetryResumeAndRedirects;
 var
   Server: TLoopbackUpdateServer;
