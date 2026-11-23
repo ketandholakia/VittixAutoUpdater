@@ -108,3 +108,5 @@ Preflight indexes explicit file and directory entries plus implicit parents in
 a case-insensitive dictionary. It rejects duplicate destinations and file and
 directory conflicts in either entry order, including Windows ordinal Unicode
 case matches. ZIP limits and reparse-point checks still apply before writes.
+
+Current extraction uses the Delphi 10.3-compatible stream API. The extractor computes CRC-32 over every output chunk and validates it against the central directory before installation.

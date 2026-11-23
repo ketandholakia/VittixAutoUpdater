@@ -1004,6 +1004,7 @@ begin
   Assert.IsFalse(TAppVersion.TryParse('x.y.z', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.$10.0.0', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.+2.0.0', Version));
+  Assert.IsFalse(TAppVersion.TryParse('1. 2.0.0', Version));
   Assert.IsFalse(TAppVersion.TryParse('-1.0.0.0', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.2.3.65536', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.2.3.4.5', Version));
@@ -1336,6 +1337,19 @@ begin
     WriteZipUInt32(Bytes, Central + 16, ReadZipUInt32(Bytes, Central + 16) xor 1);
     WriteZipUInt32(Bytes, Local + 14, ReadZipUInt32(Bytes, Local + 14) xor 1);
     Reject('incorrect-crc', Bytes);
+
+    Bytes := BuildZipFixture(ArchivePath, TArray<string>.Create('entry.bin'), Payload, zcDeflate);
+    Central := FindZipSignature(Bytes, $02014B50);
+    Local := FindZipSignature(Bytes, $04034B50);
+    WriteZipUInt32(Bytes, Central + 16, ReadZipUInt32(Bytes, Central + 16) xor 1);
+    WriteZipUInt32(Bytes, Local + 14, ReadZipUInt32(Bytes, Local + 14) xor 1);
+    Reject('incorrect-deflate-crc', Bytes);
+
+    Bytes := BuildZipFixture(ArchivePath, TArray<string>.Create('entry.bin'), Payload);
+    Central := FindZipSignature(Bytes, $02014B50);
+    WriteZipUInt16(Bytes, Central + 4, $0014);
+    WriteZipUInt32(Bytes, Central + 38, FILE_ATTRIBUTE_DEVICE);
+    Reject('dos-device-attribute', Bytes);
 
     Bytes := BuildZipFixture(ArchivePath, TArray<string>.Create('entry.bin'), Payload);
     Central := FindZipSignature(Bytes, $02014B50);
@@ -2140,6 +2154,13 @@ begin
   Assert.IsTrue(RestoreAt > CopyAt);
   Assert.IsTrue(Pos('if exist "C:\Stage\backup\preserve-2\" goto COPIED_2', Script) > 0);
   Assert.IsTrue(Pos('del /f /q "C:\App\App.exe" 2>nul', Script) > CopyAt);
+  Assert.WillRaise(
+    procedure
+    begin
+      BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App',
+        ['App.exe'], ['APP.EXE']);
+    end,
+    EFileSystemException);
 end;
 
 procedure TVittixAutoUpdaterTests.RollbackExecutableRestoresCurrentWhenBackupIsLocked;
@@ -2225,11 +2246,14 @@ begin
     Assert.AreEqual('A', TFile.ReadAllText(AppExe + '.old'));
     Assert.AreEqual('local settings', TFile.ReadAllText(ConfigPath));
 
+    TFile.Delete(ConfigPath);
     WritePayload('C');
     ExitCode := Apply;
     Assert.AreEqual<DWORD>(0, ExitCode, 'C' + sLineBreak + Output);
     Assert.AreEqual('C', TFile.ReadAllText(AppExe));
     Assert.AreEqual('B', TFile.ReadAllText(AppExe + '.old'));
+    Assert.AreEqual('payload settings', TFile.ReadAllText(ConfigPath));
+    TFile.WriteAllText(ConfigPath, 'local settings');
 
     WritePayload('D');
     TFile.WriteAllText(TPath.Combine(SourceDir, 'added.txt'), 'new file');

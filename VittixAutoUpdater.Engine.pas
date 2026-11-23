@@ -175,7 +175,8 @@ uses
 {$IFDEF MSWINDOWS}
   Windows, ShellAPI, Forms, System.Hash, System.Win.Registry,
 {$ENDIF}
-  System.Zip, System.IOUtils, System.Types, System.StrUtils, System.Generics.Defaults,
+  System.Zip, System.ZLib, System.IOUtils, System.Types, System.StrUtils,
+  System.Generics.Defaults,
   VittixAutoUpdater.Staging;
 
 type
@@ -744,6 +745,13 @@ var
   I: Integer;
   Preserve, IsExe: Boolean;
 
+  function SameInstallPath(const Left, Right: string): Boolean;
+  begin
+    Result := (Length(Left) = Length(Right)) and
+      (CompareStringOrdinal(PChar(Left), Length(Left), PChar(Right),
+        Length(Right), 1) = CSTR_EQUAL);
+  end;
+
   procedure CopyToDir(Commands: TStringList; const InputFile, OutputDir,
     OnFailure: string);
   begin
@@ -795,15 +803,20 @@ begin
          not IsSafeZipEntryPath(SourcePath, Entry, Source) or
          not IsSafeZipEntryPath(BackupRoot + '\files', Entry, Saved) then
         raise EFileSystemException.CreateFmt('Invalid install file: %s', [Entry]);
-      if SameText(Destination, AppExe + '.old') then
+      if SameInstallPath(Destination, AppExe + '.old') then
         raise EFileSystemException.Create('Payload may not replace the executable backup');
 
       IndexText := IntToStr(I);
-      IsExe := SameText(Destination, AppExe);
+      IsExe := SameInstallPath(Destination, AppExe);
       Preserve := False;
       for PreservedPath in PreserveFiles do
-        if SameText(StringReplace(PreservedPath, '/', '\', [rfReplaceAll]), Entry) then
-          Preserve := not IsExe;
+        if SameInstallPath(StringReplace(PreservedPath, '/', '\', [rfReplaceAll]), Entry) then
+        begin
+          if IsExe then
+            raise EFileSystemException.Create('PreserveFiles includes the application executable');
+          Preserve := True;
+          Break;
+        end;
       Marker := BatchPath(BackupRoot + '\preserve-' + IndexText);
 
       if not IsExe then
@@ -1641,6 +1654,7 @@ type
     IsDirectory: Boolean;
     Size: UInt64;
     CompressedSize: UInt64;
+    CRC: UInt32;
   end;
 var
   ZipArchive: TZipFile;
@@ -1659,7 +1673,7 @@ var
   Paths: TDictionary<string, string>;
   IsDirectory: Boolean;
   Attr: DWORD;
-  UnixMode: UInt32;
+  UnixMode, ActualCRC: UInt32;
   AvailableBytes, TotalBytes, TotalFreeBytes: UInt64;
 
   function OrdinalPathKey(const Path: string): string;
@@ -1780,19 +1794,21 @@ begin
             raise EFileSystemException.CreateFmt(
               'Unsafe ZIP entry path rejected: "%s"', [EntryName]);
           Header := ZipArchive.FileInfo[I];
-          if Header.IsEncrypted then
+          if (Header.Flag and 1) <> 0 then
             raise EFileSystemException.Create('Encrypted ZIP entries are unsupported');
           if not (Header.CompressionMethod in [0, 8]) then
             raise EFileSystemException.Create('Unsupported ZIP compression method');
           IsDirectory := (EntryName[Length(EntryName)] = '/') or
             (EntryName[Length(EntryName)] = '\');
-          if (TFileAttribute.faSymLink in Header.FileAttributes) or
-             (TFileAttribute.faDevice in Header.FileAttributes) or
-             ((Header.ExternalAttributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) then
+          if (Header.ExternalAttributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0 then
             raise EFileSystemException.Create('ZIP links and reparse-point attributes are unsupported');
-          if ((Header.MadeByVersion shr 8) = 0) and
-             ((TFileAttribute.faDirectory in Header.FileAttributes) <> IsDirectory) then
-            raise EFileSystemException.Create('ZIP directory metadata does not match its entry name');
+          if (Header.MadeByVersion shr 8) = 0 then
+          begin
+            if (Header.ExternalAttributes and FILE_ATTRIBUTE_DEVICE) <> 0 then
+              raise EFileSystemException.Create('ZIP links and device attributes are unsupported');
+            if ((Header.ExternalAttributes and FILE_ATTRIBUTE_DIRECTORY) <> 0) <> IsDirectory then
+              raise EFileSystemException.Create('ZIP directory metadata does not match its entry name');
+          end;
           if (Header.MadeByVersion shr 8) = 3 then
           begin
             UnixMode := (Header.ExternalAttributes shr 16) and $F000;
@@ -1801,16 +1817,17 @@ begin
                ((UnixMode = $8000) and IsDirectory) then
               raise EFileSystemException.Create('Unsupported ZIP Unix entry type');
           end;
+          // Preflight already rejected ZIP64 fields and extensions.
           if IsDirectory and
-             ((Header.UncompressedSize64 <> 0) or (Header.CompressedSize64 <> 0)) then
+             ((Header.UncompressedSize <> 0) or (Header.CompressedSize <> 0)) then
             raise EFileSystemException.Create('ZIP directory entries must not contain data');
-          if (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveSingleEntryBytes)) or
-             (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - DeclaredTotal) then
+          if (Header.UncompressedSize > UInt64(FConfig.MaxArchiveSingleEntryBytes)) or
+             (Header.UncompressedSize > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - DeclaredTotal) then
             raise EFileSystemException.Create('ZIP uncompressed size limit exceeded');
-          Inc(DeclaredTotal, Header.UncompressedSize64);
-          if (Header.UncompressedSize64 > 0) and
-             ((Header.CompressedSize64 = 0) or
-              (((Header.UncompressedSize64 - 1) div Header.CompressedSize64) + 1 >
+          Inc(DeclaredTotal, Header.UncompressedSize);
+          if (Header.UncompressedSize > 0) and
+             ((Header.CompressedSize = 0) or
+              (((Header.UncompressedSize - 1) div Header.CompressedSize) + 1 >
                UInt64(FConfig.MaxArchiveExpansionRatio))) then
             raise EFileSystemException.Create('ZIP expansion ratio limit exceeded');
 
@@ -1849,8 +1866,9 @@ begin
           Entries[I].Name := EntryName;
           Entries[I].Path := EntryPath;
           Entries[I].IsDirectory := IsDirectory;
-          Entries[I].Size := Header.UncompressedSize64;
-          Entries[I].CompressedSize := Header.CompressedSize64;
+          Entries[I].Size := Header.UncompressedSize;
+          Entries[I].CompressedSize := Header.CompressedSize;
+          Entries[I].CRC := Header.CRC32;
         end;
 
         {$IFDEF MSWINDOWS}
@@ -1901,8 +1919,9 @@ begin
               RaiseLastOSError;
             InputStream := nil;
             ActualEntryBytes := 0;
+            ActualCRC := crc32(0, nil, 0);
             try
-              ZipArchive.Read(I, InputStream, Header, True);
+              ZipArchive.Read(I, InputStream, Header);
               repeat
                 if CancelRequested then
                   raise EAbort.Create('ZIP extraction cancelled');
@@ -1918,6 +1937,7 @@ begin
                 if (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveSingleEntryBytes) - ActualEntryBytes) or
                    (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - TotalUncompressed) then
                   raise EFileSystemException.Create('ZIP streamed output limit exceeded');
+                ActualCRC := crc32(ActualCRC, @Buffer[0], BytesRead);
                 Inc(ActualEntryBytes, BytesRead);
                 Inc(TotalUncompressed, BytesRead);
                 if not WriteFile(OutputHandle, Buffer, BytesRead, Written, nil) or
@@ -1926,6 +1946,8 @@ begin
               until False;
               if ActualEntryBytes <> Entries[I].Size then
                 raise EFileSystemException.Create('ZIP entry size did not match its header');
+              if ActualCRC <> Entries[I].CRC then
+                raise EFileSystemException.Create('ZIP entry CRC did not match its header');
             finally
               InputStream.Free;
               CloseHandle(OutputHandle);

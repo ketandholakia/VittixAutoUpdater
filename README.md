@@ -516,7 +516,8 @@ the idle state until the worker finishes.
 
 Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as
 `config/settings.ini` to keep existing files. Missing files are installed from
-the payload. The list defaults to empty. The executable is always updated.
+the payload. The list defaults to empty. Listing the application executable
+causes a configuration error because every update requires a replacement executable.
 
 The UTF-8 apply helper removes a stale `.old` before trying to rename the running
 executable. It waits for the original path to become free. Before copying payload

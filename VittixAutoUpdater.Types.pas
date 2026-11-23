@@ -280,7 +280,7 @@ begin
   Result := False;
   FillChar(Version, SizeOf(Version), 0);
 
-  if Trim(VersionStr) = '' then
+  if VersionStr = '' then
     Exit;
   if VersionStr[Length(VersionStr)] = '.' then
     Exit;
@@ -294,7 +294,7 @@ begin
   FillChar(ParsedVersion, SizeOf(ParsedVersion), 0);
   for I := 0 to High(Parts) do
   begin
-    Part := Trim(Parts[I]);
+    Part := Parts[I];
     for Digit in Part do
       if not CharInSet(Digit, ['0'..'9']) then
         Exit;
