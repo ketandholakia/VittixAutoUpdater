@@ -66,6 +66,7 @@ type
     FOnStateChange: TUpdateStateEvent;
     FOnDownloadProgress: TDownloadProgressEvent;
 {$IFDEF VITTIX_TEST_LOOPBACK}
+    FBeforeManifestFetchForTests: TNotifyEvent;
     FOnZipProgressForTests: TNotifyEvent;
     FOnZipOutputForTests: TNotifyEvent;
     FOnZipBeforeCreateForTests: TNotifyEvent;
@@ -110,6 +111,8 @@ type
     function ExtractDownloadedPackageForTests(out ExtractedPath: string): Boolean;
     function ApplyArchiveForTests(const ZipFile: string;
       out OperationStagingPath: string): Boolean;
+    property BeforeManifestFetchForTests: TNotifyEvent
+      read FBeforeManifestFetchForTests write FBeforeManifestFetchForTests;
     property OnZipProgressForTests: TNotifyEvent read FOnZipProgressForTests
       write FOnZipProgressForTests;
     property OnZipOutputForTests: TNotifyEvent read FOnZipOutputForTests
@@ -1252,6 +1255,10 @@ begin
       TrustStateSaved: Boolean;
     begin
       try
+{$IFDEF VITTIX_TEST_LOOPBACK}
+        if Assigned(FBeforeManifestFetchForTests) then
+          FBeforeManifestFetchForTests(Self);
+{$ENDIF}
         Success :=
           FNetwork.FetchManifest(
             FConfig.ManifestUrls,
@@ -1372,14 +1379,15 @@ begin
       except
         on E: Exception do
         begin
+          ErrorMsg := E.Message;
           QueueCheckCompletion(OperationGeneration,
             procedure
             begin
-              SetState(usFailed, E.Message);
+              SetState(usFailed, ErrorMsg);
               if OperationGeneration <> TInterlocked.Read(FCheckOperationGeneration) then
                 Exit;
               if Assigned(Callback) then
-                Callback(ucrError, TUpdateManifest.Empty, E.Message);
+                Callback(ucrError, TUpdateManifest.Empty, ErrorMsg);
             end);
         end;
       end;

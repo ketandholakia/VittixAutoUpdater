@@ -9,6 +9,8 @@ type
   {$M+}
   [TestFixture]
   TVittixAutoUpdaterIntegrationTests = class
+  private
+    procedure RaiseCheckException(Sender: TObject);
   published
     [Test] procedure EnginePersistsRollbackFloorAndRejectsReplayedManifest;
     [Test] procedure EngineRejectsBadMetadataBeforePackageRequest;
@@ -23,6 +25,7 @@ type
     [Test] procedure VclComponentSupportsDataModuleOwnershipAndRepeatedChecks;
     [Test] procedure EngineAllowsImmediateRecheckFromFailureCallback;
     [Test] procedure EngineCancelSuppressesQueuedCompletion;
+    [Test] procedure EngineReportsExceptionAfterWorkerExits;
     [Test] procedure IndependentEnginesCompleteChecksConcurrently;
     [Test] procedure VclDestroyWithQueuedCompletionDoesNotCallOwner;
     [Test] procedure VclCancelAndDestroyDuringActiveCheckDoNotCallDeadOwner;
@@ -1587,6 +1590,41 @@ begin
     SetRollbackRegistryTestScope('');
     SetRollbackRegistryTestAccessFailure(False);
     DeleteTestRegistryScope(Scope);
+    Server.Free;
+    Key.Free;
+  end;
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.RaiseCheckException(Sender: TObject);
+begin
+  raise Exception.Create('Forced manifest worker exception');
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.EngineReportsExceptionAfterWorkerExits;
+var
+  Engine: TUpdateEngine;
+  Key: TTestSigningKey;
+  Server: TIntegrationHttpServer;
+  ReportedError: string;
+begin
+  Key := TTestSigningKey.Create;
+  Server := TIntegrationHttpServer.Create;
+  Engine := nil;
+  try
+    Engine := NewEngine(Server, Key.PublicKey);
+    Engine.BeforeManifestFetchForTests := RaiseCheckException;
+    Engine.CheckForUpdate(
+      procedure(R: TUpdateCheckResult; const M: TUpdateManifest; const E: string)
+      begin
+        Assert.AreEqual<TUpdateCheckResult>(ucrError, R);
+        ReportedError := E;
+      end);
+    Assert.IsTrue(Engine.WaitForCheckWorkerForTests(10000));
+    CheckSynchronize(0);
+    Assert.AreEqual<TUpdateState>(usFailed, Engine.State);
+    Assert.AreEqual('Forced manifest worker exception', ReportedError);
+  finally
+    Engine.Free;
     Server.Free;
     Key.Free;
   end;
