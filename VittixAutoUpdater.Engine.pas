@@ -33,7 +33,7 @@ function IsVersionAllowed(const CurrentVersion, AvailableVersion: TAppVersion;
   AllowDowngrade: Boolean): Boolean;
 function IsManifestRollbackAllowed(const CandidateVersion: TAppVersion;
   CandidateIssuedAt: Int64; const CandidateChecksum, StoredState: string;
-  out ErrorMessage: string): Boolean;
+  out ErrorMessage: string; LegacyCandidateIssuedAt: Int64 = -1): Boolean;
 function RollbackExecutable(const CurrentExe: string): Boolean;
 function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): string;
 function BuildApplyScript(const AppExe, SourcePath, AppDir: string;
@@ -591,7 +591,7 @@ end;
 
 function IsManifestRollbackAllowed(const CandidateVersion: TAppVersion;
   CandidateIssuedAt: Int64; const CandidateChecksum, StoredState: string;
-  out ErrorMessage: string): Boolean;
+  out ErrorMessage: string; LegacyCandidateIssuedAt: Int64): Boolean;
 var
   Sep1, Sep2: Integer;
   StoredVersionText, StoredTimeText, StoredChecksum: string;
@@ -618,6 +618,10 @@ begin
   StoredVersionText := Copy(StoredState, 1, Sep1 - 1);
   StoredTimeText := Copy(StoredState, Sep1 + 1, Sep2 - Sep1 - 1);
   StoredChecksum := Copy(StoredState, Sep2 + 1, MaxInt);
+  if StartsStr('r:', StoredTimeText) then
+    Delete(StoredTimeText, 1, 2)
+  else if LegacyCandidateIssuedAt >= 0 then
+    CandidateIssuedAt := LegacyCandidateIssuedAt;
   if not TryStrToInt64(StoredTimeText, StoredIssuedAt) then
   begin
     ErrorMessage := 'Persistent update trust timestamp is malformed; refusing update.';
@@ -668,7 +672,7 @@ begin
   if GRollbackRegistryTestAccessFailure then
     KeyName := KeyName + '\' + StringOfChar('X', 1024);
 {$ENDIF}
-  NewIssuedAt := Trunc(Manifest.IssuedAt * 86400);
+  NewIssuedAt := Round(Manifest.IssuedAt * 86400);
   Registry := TRegistry.Create(KEY_READ or KEY_WRITE);
   try
     try
@@ -683,11 +687,12 @@ begin
       begin
         Stored := Registry.ReadString('Floor');
         if not IsManifestRollbackAllowed(Manifest.Version, NewIssuedAt,
-          Manifest.Checksum, Stored, ErrorMessage) then
+          Manifest.Checksum, Stored, ErrorMessage,
+          Trunc(Manifest.IssuedAt * 86400)) then
           Exit;
       end;
 
-      NewState := Manifest.Version.ToString + '|' + IntToStr(NewIssuedAt) +
+      NewState := Manifest.Version.ToString + '|r:' + IntToStr(NewIssuedAt) +
         '|' + Manifest.Checksum;
       Registry.WriteString('Floor', NewState);
       Result := True;

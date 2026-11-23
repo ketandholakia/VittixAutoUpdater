@@ -276,6 +276,8 @@ var
   Parts: TArray<string>;
   ParsedVersion: TAppVersion;
   PartValue, I: Integer;
+  Part: string;
+  Digit: Char;
 begin
   Result := False;
   FillChar(Version, SizeOf(Version), 0);
@@ -294,7 +296,11 @@ begin
   FillChar(ParsedVersion, SizeOf(ParsedVersion), 0);
   for I := 0 to High(Parts) do
   begin
-    if not TryStrToInt(Trim(Parts[I]), PartValue) or
+    Part := Trim(Parts[I]);
+    for Digit in Part do
+      if not CharInSet(Digit, ['0'..'9']) then
+        Exit;
+    if not TryStrToInt(Part, PartValue) or
        (PartValue < 0) or (PartValue > High(Word)) then
       Exit;
     case I of

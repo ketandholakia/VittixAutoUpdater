@@ -40,6 +40,7 @@ type
     [Test] procedure AppVersionComparisonAndParsing;
     [Test] procedure AppVersionRejectsMalformedValues;
     [Test] procedure ManifestParserAcceptsValidDocument;
+    [Test] procedure ProxyEndpointParsesExplicitAndDefaultPorts;
     [Test] procedure ManifestParserRejectsMissingFields;
     [Test] procedure ManifestParserRejectsMalformedDocuments;
     [Test] procedure UnsignedManifestSkipsIssuedAtAgeRule;
@@ -996,6 +997,8 @@ var
 begin
   Assert.IsFalse(TAppVersion.TryParse('', Version));
   Assert.IsFalse(TAppVersion.TryParse('x.y.z', Version));
+  Assert.IsFalse(TAppVersion.TryParse('1.$10.0.0', Version));
+  Assert.IsFalse(TAppVersion.TryParse('1.+2.0.0', Version));
   Assert.IsFalse(TAppVersion.TryParse('-1.0.0.0', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.2.3.65536', Version));
   Assert.IsFalse(TAppVersion.TryParse('1.2.3.4.5', Version));
@@ -1012,12 +1015,33 @@ var
   ErrorMessage: string;
 begin
   Assert.IsTrue(TryParseManifestJson(
-    ValidManifestJson('2026-10-20T12:00:00Z'), 'Demo', 30,
+    #$FEFF + StringReplace(ValidManifestJson('2026-10-20T12:00:00Z'),
+      '"issued_at"', '"release_date":"2026-10-20T14:00:00+02:00","issued_at"', []),
+    'Demo', 30,
     EncodeDateTime(2026, 10, 20, 12, 0, 1, 0), True,
     Manifest, ErrorMessage),
     ErrorMessage);
   Assert.AreEqual('2.0.0.0', Manifest.Version.ToString);
   Assert.AreEqual<Int64>(123, Manifest.FileSize);
+  Assert.IsTrue(Manifest.ReleaseDate = EncodeDateTime(2026, 10, 20, 12, 0, 0, 0));
+end;
+
+procedure TVittixAutoUpdaterTests.ProxyEndpointParsesExplicitAndDefaultPorts;
+var
+  Host: string;
+  Port: Integer;
+begin
+  Assert.IsTrue(TryParseProxyEndpoint('proxy.example', Host, Port));
+  Assert.AreEqual('proxy.example', Host);
+  Assert.AreEqual(8080, Port);
+  Assert.IsTrue(TryParseProxyEndpoint('proxy.example:3128', Host, Port));
+  Assert.AreEqual('proxy.example', Host);
+  Assert.AreEqual(3128, Port);
+  Assert.IsTrue(TryParseProxyEndpoint('[::1]:80', Host, Port));
+  Assert.AreEqual('::1', Host);
+  Assert.AreEqual(80, Port);
+  Assert.IsFalse(TryParseProxyEndpoint('proxy.example:', Host, Port));
+  Assert.IsFalse(TryParseProxyEndpoint('proxy.example:65536', Host, Port));
 end;
 
 procedure TVittixAutoUpdaterTests.ManifestParserRejectsMissingFields;
@@ -1563,6 +1587,12 @@ begin
     TAppVersion.Create('2.0.0.1'), 1001, 'sha256:cc', Stored, ErrorMessage));
   Assert.IsFalse(IsManifestRollbackAllowed(
     TAppVersion.Create('2.0.0.0'), 1000, 'sha256:aa', 'corrupt', ErrorMessage));
+  Assert.IsTrue(IsManifestRollbackAllowed(
+    TAppVersion.Create('2.0.0.0'), 1001, 'sha256:aa', Stored, ErrorMessage, 1000));
+  Assert.IsFalse(IsManifestRollbackAllowed(
+    TAppVersion.Create('2.0.0.0'), 1001, 'sha256:bb', Stored, ErrorMessage, 1000));
+  Assert.IsTrue(IsManifestRollbackAllowed(TAppVersion.Create('2.0.0.0'),
+    1001, 'sha256:aa', '2.0.0.0|r:1001|sha256:aa', ErrorMessage, 1000));
 end;
 
 procedure TVittixAutoUpdaterTests.ApplyUpdateRejectsInvalidState;
@@ -1865,7 +1895,7 @@ begin
     Manager.MaxRetries := 1;
     Manager.MaxManifestAgeDays := 36500;
     SetLength(Urls, 1);
-    Urls[0] := Server.Url('/signed-manifest');
+    Urls[0] := Server.Url('/signed-manifest?channel=stable');
 
     Assert.IsTrue(Manager.FetchManifest(Urls, 'Demo', Manifest),
       'the fixed signed vector should be accepted');

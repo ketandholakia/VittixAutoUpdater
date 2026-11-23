@@ -135,6 +135,8 @@ function IsDownloadWithinSizeCap(Offset, Received, ExpectedSize,
   Margin: Int64): Boolean;
 function IsManifestWithinAge(const IssuedAtUtc, CurrentUtc: TDateTime;
   MaxAgeDays: Integer): Boolean;
+function TryParseProxyEndpoint(const Value: string; out Host: string;
+  out Port: Integer): Boolean;
 function TryParseManifestJson(const JsonText, AppName: string;
   MaxAgeDays: Integer; CurrentUtc: TDateTime; RequireIssuedAt: Boolean;
   out Manifest: TUpdateManifest; out ErrorMessage: string): Boolean;
@@ -781,6 +783,7 @@ var
   SigResponse: IHTTPResponse;
   SigBytes: TBytes;
   KeyId, EnvelopeText, SignatureText, TrustedKey: string;
+  SignatureUri: TURI;
   TrustedKeys: TArray<string>;
   I: Integer;
 begin
@@ -792,8 +795,11 @@ begin
     FSizeLimitExceeded := False;
     FOnProgress := nil;
     HttpClient.OnReceiveData := ReceiveDataHandler;
+    SignatureUri := TURI.Create(ManifestUrl);
+    SignatureUri.Path := SignatureUri.Path + '.sig';
+    SignatureUri.Fragment := '';
     SigResponse := HttpGetFollowingSecureRedirects(
-      HttpClient, ManifestUrl + '.sig', SigStream, FRequireHttps, nil,
+      HttpClient, SignatureUri.ToString, SigStream, FRequireHttps, nil,
       LoopbackHttpAllowedForTests);
 
     if (SigResponse.StatusCode < 200) or (SigResponse.StatusCode >= 300) then
@@ -862,17 +868,63 @@ begin
     Result := Copy(Result, 8, MaxInt);
 end;
 
+function TryParseProxyEndpoint(const Value: string; out Host: string;
+  out Port: Integer): Boolean;
+var
+  Endpoint, PortText: string;
+  Separator, ClosingBracket: Integer;
+  Digit: Char;
+begin
+  Result := False;
+  Endpoint := Trim(Value);
+  Host := Endpoint;
+  Port := 8080;
+  if Endpoint = '' then
+    Exit;
+
+  if Endpoint[1] = '[' then
+  begin
+    ClosingBracket := Pos(']', Endpoint);
+    if ClosingBracket < 3 then
+      Exit;
+    Host := Copy(Endpoint, 2, ClosingBracket - 2);
+    if ClosingBracket = Length(Endpoint) then
+      Exit(True);
+    Separator := ClosingBracket + 1;
+    if Endpoint[Separator] <> ':' then
+      Exit;
+  end
+  else
+  begin
+    Separator := Pos(':', Endpoint);
+    if Separator = 0 then
+      Exit(True);
+    Host := Copy(Endpoint, 1, Separator - 1);
+  end;
+
+  PortText := Copy(Endpoint, Separator + 1, MaxInt);
+  for Digit in PortText do
+    if not CharInSet(Digit, ['0'..'9']) then
+      Exit;
+  Result := (Host <> '') and TryStrToInt(PortText, Port) and
+    (Port > 0) and (Port <= 65535);
+end;
+
 function TUpdateNetworkManager.CreateHttpClient: TObject;
 var
   Client: THttpClient;
+  Host: string;
+  Port: Integer;
 begin
+  if (FProxy <> '') and not TryParseProxyEndpoint(FProxy, Host, Port) then
+    raise ENetworkFatalException.Create('Invalid proxy endpoint. Use host or host:port.');
   Client := THttpClient.Create;
   Client.UserAgent := FUserAgent;
   Client.ConnectionTimeout := FConnectionTimeout;
   Client.ResponseTimeout := FConnectionTimeout * 10;
 
   if FProxy <> '' then
-    Client.ProxySettings := TProxySettings.Create(FProxy, 8080);
+    Client.ProxySettings := TProxySettings.Create(Host, Port);
 
   Result := Client;
 end;
@@ -944,14 +996,17 @@ var
   JsonObj: TJSONObject;
   AppObj: TJSONObject;
   JsonValue: TJSONValue;
-  Value: string;
+  Value, Json: string;
 begin
   Result := False;
   Manifest := TUpdateManifest.Empty;
   ErrorMessage := '';
   JsonObj := nil;
   try
-    JsonValue := TJSONObject.ParseJSONValue(JsonText);
+    Json := JsonText;
+    if (Json <> '') and (Json[1] = #$FEFF) then
+      Delete(Json, 1, 1);
+    JsonValue := TJSONObject.ParseJSONValue(Json);
     if not (JsonValue is TJSONObject) then
     begin
       JsonValue.Free;
@@ -992,7 +1047,8 @@ begin
     AppObj.TryGetValue<Int64>('file_size', Manifest.FileSize);
     AppObj.TryGetValue<string>('checksum', Manifest.Checksum);
     if AppObj.TryGetValue<string>('release_date', Value) then
-      TryStrToDateTime(Value, Manifest.ReleaseDate);
+      if not TryISO8601ToDate(Value, Manifest.ReleaseDate, True) then
+        Manifest.ReleaseDate := 0;
     if AppObj.TryGetValue<string>('min_version', Value) then
       Manifest.MinVersion := TAppVersion.Create(Value);
     if AppObj.TryGetValue<string>('severity', Value) then
