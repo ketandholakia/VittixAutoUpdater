@@ -34,6 +34,7 @@ function IsVersionAllowed(const CurrentVersion, AvailableVersion: TAppVersion;
 function IsManifestRollbackAllowed(const CandidateVersion: TAppVersion;
   CandidateIssuedAt: Int64; const CandidateChecksum, StoredState: string;
   out ErrorMessage: string): Boolean;
+function RollbackExecutable(const CurrentExe: string): Boolean;
 function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): string;
 function BuildApplyScript(const AppExe, SourcePath, AppDir: string;
   const PayloadFiles, PreserveFiles: TArray<string>): string;
@@ -2014,26 +2015,35 @@ begin
   end;
 end;
 
-function TUpdateEngine.Rollback: Boolean;
+function RollbackExecutable(const CurrentExe: string): Boolean;
 var
-  CurrentExe, BackupExe: string;
+  BackupExe, AsideExe: string;
 begin
-  CurrentExe := ParamStr(0);
+  Result := False;
+{$IFDEF MSWINDOWS}
   BackupExe := CurrentExe + '.old';
-
-  {$IFDEF DELPHIXE_UP}
-  if not TFile.Exists(BackupExe) then
-  {$ELSE}
   if not FileExists(BackupExe) then
-  {$ENDIF}
-    Exit(False);
+    Exit;
 
-  {$IFDEF DELPHIXE_UP}
-  TFile.Delete(CurrentExe);
-  {$ELSE}
-  SysUtils.DeleteFile(CurrentExe);
-  {$ENDIF}
-  Result := RenameFile(BackupExe, CurrentExe);
+  AsideExe := CurrentExe + '.' + TPath.GetRandomFileName;
+  if not MoveFile(PChar(CurrentExe), PChar(AsideExe)) then
+    Exit;
+
+  if MoveFile(PChar(BackupExe), PChar(CurrentExe)) then
+  begin
+    SysUtils.DeleteFile(AsideExe);
+    Exit(True);
+  end;
+
+  // Restore the original name when promotion of the previous version fails.
+  // If an external filesystem failure prevents restoration, retain the file.
+  MoveFile(PChar(AsideExe), PChar(CurrentExe));
+{$ENDIF}
+end;
+
+function TUpdateEngine.Rollback: Boolean;
+begin
+  Result := RollbackExecutable(ParamStr(0));
 end;
 
 procedure TUpdateEngine.Reset;

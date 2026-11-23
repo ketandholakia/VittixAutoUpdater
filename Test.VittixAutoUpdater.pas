@@ -67,6 +67,7 @@ type
     [Test] procedure SecureDefaultsRequireSignedMetadata;
     [Test] procedure VersionDowngradeRequiresOptIn;
     [Test] procedure ManifestRollbackFloorRejectsReplayAndDowngrade;
+    [Test] procedure RollbackExecutableRestoresCurrentWhenBackupIsLocked;
     [Test] procedure ApplyUpdateRejectsInvalidState;
     [Test] procedure SecurityWarningsAreReported;
     [Test] procedure RequireSecureConfigBlocksUnsignedChecks;
@@ -1951,6 +1952,39 @@ begin
   Assert.IsTrue(RestoreAt > CopyAt);
   Assert.IsTrue(Pos('if exist "C:\Stage\backup\preserve-2\" goto COPIED_2', Script) > 0);
   Assert.IsTrue(Pos('del /f /q "C:\App\App.exe" 2>nul', Script) > CopyAt);
+end;
+
+procedure TVittixAutoUpdaterTests.RollbackExecutableRestoresCurrentWhenBackupIsLocked;
+var
+  Root, CurrentExe, BackupExe: string;
+  LockedFile: TFileStream;
+begin
+  Root := TPath.Combine(TPath.GetTempPath, TPath.GetRandomFileName);
+  TDirectory.CreateDirectory(Root);
+  try
+    CurrentExe := TPath.Combine(Root, 'test.exe');
+    BackupExe := CurrentExe + '.old';
+    TFile.WriteAllText(CurrentExe, 'current');
+    TFile.WriteAllText(BackupExe, 'previous');
+    LockedFile := TFileStream.Create(CurrentExe, fmOpenRead or fmShareExclusive);
+    try
+      Assert.IsFalse(RollbackExecutable(CurrentExe));
+    finally
+      LockedFile.Free;
+    end;
+    LockedFile := TFileStream.Create(BackupExe, fmOpenRead or fmShareExclusive);
+    try
+      Assert.IsFalse(RollbackExecutable(CurrentExe));
+      Assert.AreEqual('current', TFile.ReadAllText(CurrentExe));
+    finally
+      LockedFile.Free;
+    end;
+    Assert.IsTrue(RollbackExecutable(CurrentExe));
+    Assert.AreEqual('previous', TFile.ReadAllText(CurrentExe));
+    Assert.IsFalse(FileExists(BackupExe));
+  finally
+    TDirectory.Delete(Root, True);
+  end;
 end;
 
 initialization
