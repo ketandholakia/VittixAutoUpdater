@@ -50,6 +50,7 @@ type
     FConfig: TUpdaterConfig;
     FNetwork: TUpdateNetworkManager;
     FCurrentVersion: TAppVersion;
+    FHasCurrentVersion: Boolean;
     FState: TUpdateState;
     FDownloadedFile: string;
     FExtractPath: string;
@@ -91,6 +92,8 @@ type
       var Abort: Boolean);
     procedure SetState(NewState: TUpdateState; const StatusMsg: string);
     procedure SetConfig(const Value: TUpdaterConfig);
+    procedure ReadCurrentVersion(const FileName: string);
+    procedure SetCurrentVersion(const Value: TAppVersion);
     procedure QueueCheckCompletion(OperationGeneration: Int64;
       const Action: TThreadProcedure);
     function GetTempZipFile: string;
@@ -123,6 +126,7 @@ type
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
     procedure EnableLoopbackHttpForTests;
+    procedure SetCurrentVersionFromFileForTests(const FileName: string);
     function WaitForCheckWorkerForTests(Timeout: Cardinal): Boolean;
     function ExtractArchiveForTests(const ZipFile, DestPath: string): Boolean;
     function ExtractDownloadedPackageForTests(out ExtractedPath: string): Boolean;
@@ -142,7 +146,7 @@ type
       read FOnZipBeforeCompleteForTests write FOnZipBeforeCompleteForTests;
 {$ENDIF}
 
-    property CurrentVersion: TAppVersion read FCurrentVersion write FCurrentVersion;
+    property CurrentVersion: TAppVersion read FCurrentVersion write SetCurrentVersion;
     property State: TUpdateState read FState;
     property Config: TUpdaterConfig read FConfig write SetConfig;
     property LastManifest: TUpdateManifest read FLastManifest;
@@ -1050,18 +1054,28 @@ begin
   FExtractPath := '';
   PrepareCancellation;
 
-  try
+  ReadCurrentVersion(ParamStr(0));
+end;
+
+procedure TUpdateEngine.ReadCurrentVersion(const FileName: string);
+begin
 {$IFDEF MSWINDOWS}
-    FCurrentVersion := TAppVersion.CreateFromFile(ParamStr(0));
-{$ELSE}
-    FillChar(FCurrentVersion, SizeOf(FCurrentVersion), 0);
+  FHasCurrentVersion := GetFileVersion(FileName, FCurrentVersion);
 {$ENDIF}
-  except
-    FillChar(FCurrentVersion, SizeOf(FCurrentVersion), 0);
-  end;
+end;
+
+procedure TUpdateEngine.SetCurrentVersion(const Value: TAppVersion);
+begin
+  FCurrentVersion := Value;
+  FHasCurrentVersion := True;
 end;
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
+procedure TUpdateEngine.SetCurrentVersionFromFileForTests(const FileName: string);
+begin
+  ReadCurrentVersion(FileName);
+end;
+
 procedure TUpdateEngine.EnableLoopbackHttpForTests;
 begin
   FNetwork.AllowLoopbackHttpForTests := True;
@@ -1347,6 +1361,15 @@ begin
       end;
   end;
 
+  if not FHasCurrentVersion then
+  begin
+    ErrorMsg := 'Cannot read the installed executable version resource. Set CurrentVersion explicitly.';
+    SetState(usFailed, ErrorMsg);
+    if Assigned(Callback) then
+      Callback(ucrError, TUpdateManifest.Empty, ErrorMsg);
+    Exit;
+  end;
+
   FStateLock.Acquire;
   try
     if FWorkerActive or not (FState in [usIdle, usAvailable, usFailed, usCancelled]) then
@@ -1398,23 +1421,6 @@ begin
           Exit;
         end;
 
-        if FConfig.VerifyManifestSignature and
-           (Manifest.Version < FCurrentVersion) then
-        begin
-          ErrorMsg := Format('Signed manifest version %s is below installed version %s.',
-            [Manifest.Version.ToString, FCurrentVersion.ToString]);
-          QueueCheckCompletion(OperationGeneration,
-            procedure
-            begin
-              SetState(usFailed, ErrorMsg);
-              if OperationGeneration <> TInterlocked.Read(FCheckOperationGeneration) then
-                Exit;
-              if Assigned(Callback) then
-                Callback(ucrError, TUpdateManifest.Empty, ErrorMsg);
-            end);
-          Exit;
-        end;
-
 {$IFDEF MSWINDOWS}
         if FConfig.VerifyManifestSignature then
         begin
@@ -1443,7 +1449,8 @@ begin
 {$ENDIF}
 
         if IsVersionAllowed(FCurrentVersion, Manifest.Version,
-          FConfig.AllowDowngrade and FConfig.AllowInsecureUnsignedManifests) and
+          not FConfig.VerifyManifestSignature and FConfig.AllowDowngrade and
+          FConfig.AllowInsecureUnsignedManifests) and
           (Manifest.Version <> FCurrentVersion) then
         begin
           if Manifest.MinVersion.IsValid and

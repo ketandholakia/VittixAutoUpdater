@@ -26,6 +26,8 @@ type
     [Test] procedure EngineAllowsImmediateRecheckFromFailureCallback;
     [Test] procedure EngineCancelSuppressesQueuedCompletion;
     [Test] procedure EngineReportsExceptionAfterWorkerExits;
+    [Test] procedure EngineRequiresInstalledVersionBeforeChecking;
+    [Test] procedure OlderSignedManifestReturnsNoUpdateAndPersistsFloor;
     [Test] procedure IndependentEnginesCompleteChecksConcurrently;
     [Test] procedure VclDestroyWithQueuedCompletionDoesNotCallOwner;
     [Test] procedure VclCancelAndDestroyDuringActiveCheckDoNotCallDeadOwner;
@@ -1618,6 +1620,68 @@ begin
     Done.Free;
     SetRollbackRegistryTestScope('');
     SetRollbackRegistryTestAccessFailure(False);
+    DeleteTestRegistryScope(Scope);
+    Server.Free;
+    Key.Free;
+  end;
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.EngineRequiresInstalledVersionBeforeChecking;
+var
+  Key: TTestSigningKey;
+  Server: TIntegrationHttpServer;
+  Engine: TUpdateEngine;
+  Manifest: TUpdateManifest;
+  FileName, ErrorMessage: string;
+begin
+  Key := TTestSigningKey.Create;
+  Server := TIntegrationHttpServer.Create;
+  Engine := nil;
+  FileName := TPath.GetTempFileName;
+  try
+    TFile.WriteAllText(FileName, 'No version resource');
+    Engine := NewEngine(Server, Key.PublicKey);
+    Engine.SetCurrentVersionFromFileForTests(FileName);
+    Assert.AreEqual<TUpdateCheckResult>(ucrError,
+      CompleteEngineCheck(Engine, Manifest, ErrorMessage));
+    Assert.IsTrue(Pos('version resource', ErrorMessage) > 0);
+    Assert.AreEqual<TUpdateState>(usFailed, Engine.State);
+    Assert.AreEqual(0, Server.ManifestRequests);
+  finally
+    TFile.Delete(FileName);
+    Engine.Free;
+    Server.Free;
+    Key.Free;
+  end;
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.OlderSignedManifestReturnsNoUpdateAndPersistsFloor;
+var
+  Key: TTestSigningKey;
+  Server: TIntegrationHttpServer;
+  Engine: TUpdateEngine;
+  Manifest: TUpdateManifest;
+  Scope, ErrorMessage, Floor: string;
+begin
+  Key := TTestSigningKey.Create;
+  Server := TIntegrationHttpServer.Create;
+  Engine := nil;
+  Scope := NewTestRegistryScope;
+  SetRollbackRegistryTestScope(Scope);
+  try
+    SetSignedResponse(Server, Key, BuildManifest(Server, '1.0.0.0',
+      TTimeZone.Local.ToUniversalTime(Now)));
+    Engine := NewEngine(Server, Key.PublicKey);
+    Engine.CurrentVersion := TAppVersion.Create('2.0.0.0');
+    Assert.AreEqual<TUpdateCheckResult>(ucrNoUpdateAvailable,
+      CompleteEngineCheck(Engine, Manifest, ErrorMessage), ErrorMessage);
+    Assert.AreEqual<TUpdateState>(usIdle, Engine.State);
+    Assert.IsTrue(ReadTestFloor(Scope, Floor));
+    Assert.IsTrue(Floor.StartsWith('1.0.0.0|'));
+    Assert.AreEqual(0, Server.PackageRequests);
+  finally
+    Engine.Free;
+    SetRollbackRegistryTestScope('');
     DeleteTestRegistryScope(Scope);
     Server.Free;
     Key.Free;
