@@ -6,6 +6,7 @@ uses
   VittixAutoUpdater.Types in '..\VittixAutoUpdater.Types.pas',
   VittixAutoUpdater.Engine in '..\VittixAutoUpdater.Engine.pas',
   VittixAutoUpdater.Network in '..\VittixAutoUpdater.Network.pas',
+  VittixAutoUpdater.Staging in '..\VittixAutoUpdater.Staging.pas',
   VittixAutoUpdater.VisualComponent in '..\VittixAutoUpdater.VisualComponent.pas';
 
 {$R 'VittixAutoUpdaterEnhancedDemo.res'}

@@ -109,7 +109,7 @@ begin
   EditZip.OnChange          := AnyFieldChanged;
 
   PanelStatus.Color := clBtnFace;
-  LabelStatusIcon.Caption := '◻';
+  LabelStatusIcon.Caption := #$25FB;
   LabelStatusText.Caption := 'Not validated';
 end;
 
@@ -328,7 +328,7 @@ begin
   BtnSaveManifest.Enabled := False;
 
   PanelStatus.Color := clBtnFace;
-  LabelStatusIcon.Caption := '◻';
+  LabelStatusIcon.Caption := #$25FB;
   LabelStatusText.Caption := 'Not validated';
 end;
 
@@ -337,12 +337,12 @@ begin
   if OK then
   begin
     PanelStatus.Color := clMoneyGreen;   // big green bar
-    LabelStatusIcon.Caption := '✔';
+    LabelStatusIcon.Caption := #$2714;
   end
   else
   begin
     PanelStatus.Color := $00C6E7FF;      // light red/pink
-    LabelStatusIcon.Caption := '❌';
+    LabelStatusIcon.Caption := #$274C;
   end;
 
   LabelStatusText.Caption := Msg;

@@ -126,6 +126,7 @@
         <DCCReference Include="..\VittixAutoUpdater.Types.pas"/>
         <DCCReference Include="..\VittixAutoUpdater.Engine.pas"/>
         <DCCReference Include="..\VittixAutoUpdater.Network.pas"/>
+        <DCCReference Include="..\VittixAutoUpdater.Staging.pas"/>
         <DCCReference Include="..\VittixAutoUpdater.VisualComponent.pas"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>
