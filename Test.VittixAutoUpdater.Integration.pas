@@ -10,6 +10,9 @@ type
   [TestFixture]
   TVittixAutoUpdaterIntegrationTests = class
   private
+    FInstallLocationError: string;
+    procedure CaptureInstallLocationError(Sender: TObject; Success: Boolean;
+      const ErrorMessage: string);
     procedure RaiseCheckException(Sender: TObject);
   published
     [Test] procedure EnginePersistsRollbackFloorAndRejectsReplayedManifest;
@@ -24,6 +27,7 @@ type
     [Test] procedure VclComponentStreamsConfigAndDeliversEventsOnMainThread;
     [Test] procedure VisualComponentLoadsLegacyConfigData;
     [Test] procedure VclComponentSupportsDataModuleOwnershipAndRepeatedChecks;
+    [Test] procedure VclComponentReportsUnsupportedInstallLocation;
     [Test] procedure EngineAllowsImmediateRecheckFromFailureCallback;
     [Test] procedure EngineCancelSuppressesQueuedCompletion;
     [Test] procedure EngineReportsExceptionAfterWorkerExits;
@@ -48,6 +52,8 @@ uses
   System.Threading,
   System.Types,
   System.Zip,
+  Vcl.Controls,
+  Vcl.StdCtrls,
   Vcl.Forms,
   System.Win.Registry,
   VittixAutoUpdater.Types,
@@ -1467,6 +1473,67 @@ begin
     DeleteTestRegistryScope(Scope);
     Server.Free;
     Key.Free;
+  end;
+end;
+
+function MappedInstallDrive(const RootPath: string): Cardinal;
+begin
+  Result := DRIVE_REMOTE;
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.CaptureInstallLocationError(
+  Sender: TObject; Success: Boolean; const ErrorMessage: string);
+begin
+  Assert.IsFalse(Success);
+  FInstallLocationError := ErrorMessage;
+end;
+
+procedure TVittixAutoUpdaterIntegrationTests.VclComponentReportsUnsupportedInstallLocation;
+var
+  Form: TForm;
+  Updater: TVittixAutoUpdaterUI;
+  Download: TButton;
+  Deadline: UInt64;
+  Attempt: Integer;
+
+  function FindDownload(Parent: TWinControl): TButton;
+  begin
+    Result := nil;
+    for var Index := 0 to Parent.ControlCount - 1 do
+    begin
+      var Child := Parent.Controls[Index];
+      if (Child is TButton) and (TButton(Child).Caption = 'Download') then
+        Exit(TButton(Child));
+      if Child is TWinControl then
+        Result := FindDownload(TWinControl(Child));
+      if Assigned(Result) then
+        Exit;
+    end;
+  end;
+
+begin
+  Form := TForm.CreateNew(nil);
+  try
+    Updater := TVittixAutoUpdaterUI.Create(Form);
+    Updater.Parent := Form;
+    Updater.ButtonStyle := ubsBoth;
+    Updater.Engine.InstallDriveTypeForTests := MappedInstallDrive;
+    Updater.OnUpdateComplete := CaptureInstallLocationError;
+    for Attempt := 1 to 2 do
+    begin
+      FInstallLocationError := '';
+      Updater.CheckForUpdates;
+      Deadline := GetTickCount64 + 5000;
+      while (FInstallLocationError = '') and (GetTickCount64 < Deadline) do
+        CheckSynchronize(10);
+      Assert.AreEqual(UnsupportedNetworkInstall, FInstallLocationError);
+      Assert.IsFalse(Updater.IsUpdating);
+      Download := FindDownload(Updater);
+      Assert.IsTrue(Assigned(Download));
+      Assert.IsFalse(Download.Enabled);
+    end;
+  finally
+    Form.Free;
   end;
 end;
 
