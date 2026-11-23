@@ -98,3 +98,5 @@ exception explicitly enabled.
   Verify no private signing key is present on the test VM.
 - Record the executable hash, manifest signature, Windows version, and GUI
   acceptance results before release.
+- Attach the Win32 and Win64 DUnitX logs and the Python signing-test log to
+  the release.

@@ -1,0 +1,63 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{A281E3B2-D5A2-4F7B-A73F-9B5DD9E22C1A}</ProjectGuid>
+    <MainSource>TestCompilation.dpr</MainSource>
+    <ProjectVersion>20.2</ProjectVersion>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <Platform Condition="'$(Platform)'==''">Win32</Platform>
+    <TargetedPlatforms>3</TargetedPlatforms>
+    <AppType>Console</AppType>
+    <FrameworkType>VCL</FrameworkType>
+  </PropertyGroup>
+  <PropertyGroup>
+    <DCC_Define>VITTIX_TEST_LOOPBACK;VITTIX_TEST_REGISTRY;VITTIX_TEST_STAGING;$(DCC_Define)</DCC_Define>
+    <DCC_Namespace>System;Winapi;Vcl;$(DCC_Namespace)</DCC_Namespace>
+    <Namespace>System;Winapi;Vcl</Namespace>
+    <DCC_UnitSearchPath>$(BDS)\lib\$(Platform)\$(Config);$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    <DCC_ExeOutput>$(TEMP)\VittixAutoUpdaterTests\$(Platform)\$(Config)</DCC_ExeOutput>
+    <DCC_DcuOutput>$(TEMP)\VittixAutoUpdaterTests\$(Platform)\$(Config)</DCC_DcuOutput>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_2)'!=''">
+    <Cfg_2>true</Cfg_2>
+    <CfgParent>Base</CfgParent>
+    <Base>true</Base>
+    <DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
+    <DCC_Optimize>false</DCC_Optimize>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_1)'!=''">
+    <Cfg_1>true</Cfg_1>
+    <CfgParent>Base</CfgParent>
+    <Base>true</Base>
+    <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
+    <DCC_DebugInformation>0</DCC_DebugInformation>
+    <DCC_Optimize>true</DCC_Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <DelphiCompile Include="TestCompilation.dpr">
+      <MainSource>MainSource</MainSource>
+    </DelphiCompile>
+    <DCCReference Include="Test.VittixAutoUpdater.pas" />
+    <DCCReference Include="Test.VittixAutoUpdater.Integration.pas" />
+    <DCCReference Include="Test.VittixAutoUpdater.Staging.pas" />
+    <DCCReference Include="VittixAutoUpdater.Types.pas" />
+    <DCCReference Include="VittixAutoUpdater.Network.pas" />
+    <DCCReference Include="VittixAutoUpdater.Staging.pas" />
+    <DCCReference Include="VittixAutoUpdater.Engine.pas" />
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>Delphi.Personality.12</Borland.Personality>
+    <Borland.ProjectType>Application</Borland.ProjectType>
+    <BorlandProject>
+      <Delphi.Personality>
+        <Source>
+          <Source Name="MainSource">TestCompilation.dpr</Source>
+        </Source>
+      </Delphi.Personality>
+      <Platforms>
+        <Platform value="Win32">True</Platform>
+        <Platform value="Win64">True</Platform>
+      </Platforms>
+    </BorlandProject>
+  </ProjectExtensions>
+  <Import Project="$(BDS)\Bin\CodeGear.Delphi.Targets" />
+</Project>
