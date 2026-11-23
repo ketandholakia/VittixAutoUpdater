@@ -1,4 +1,4 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{FAA191BB-F3C2-4998-B450-2A9F7BE7A41E}</ProjectGuid>
         <MainSource>VittixAutoUpdaterDesign.dpk</MainSource>
@@ -46,6 +46,8 @@
         <DCC_N>false</DCC_N>
         <DCC_S>false</DCC_S>
         <DCC_ImageBase>00400000</DCC_ImageBase>
+        <DCC_BplOutput>$(BDSCOMMONDIR)\Bpl</DCC_BplOutput>
+        <DCC_DcpOutput>$(BDSCOMMONDIR)\Dcp</DCC_DcpOutput>
         <GenDll>true</GenDll>
         <GenPackage>true</GenPackage>
         <SanitizedProjectName>VittixAutoUpdaterDesign</SanitizedProjectName>
@@ -56,20 +58,27 @@
         <VerInfo_Keys>CompanyName=;FileDescription=;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=;ProductVersion=1.0.0.0;Comments=;CFBundleName=</VerInfo_Keys>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win32)'!=''">
+        <DCC_UnitSearchPath>$(BDSCOMMONDIR)\Dcp;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <DCC_Namespace>System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
         <BT_BuildType>Debug</BT_BuildType>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=;ProgramID=com.embarcadero.$(MSBuildProjectName)</VerInfo_Keys>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <DCC_UsePackage>vcl;rtl;vclimg;VclSmp;$(DCC_UsePackage)</DCC_UsePackage>
+        <DCC_UsePackage>vcl;rtl;designide;vclx;VittixAutoUpdaterRuntime;$(DCC_UsePackage)</DCC_UsePackage>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win64)'!=''">
+        <DCC_UnitSearchPath>$(BDSCOMMONDIR)\Dcp\Win64;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_BplOutput>$(BDSCOMMONDIR)\Bpl\Win64</DCC_BplOutput>
+        <DCC_DcpOutput>$(BDSCOMMONDIR)\Dcp\Win64</DCC_DcpOutput>
         <DCC_Namespace>System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;$(DCC_Namespace)</DCC_Namespace>
         <BT_BuildType>Debug</BT_BuildType>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Base_Win64x)'!=''">
+        <DCC_UnitSearchPath>$(BDSCOMMONDIR)\Dcp\Win64x;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_BplOutput>$(BDSCOMMONDIR)\Bpl\Win64x</DCC_BplOutput>
+        <DCC_DcpOutput>$(BDSCOMMONDIR)\Dcp\Win64x</DCC_DcpOutput>
         <DCC_Namespace>System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;$(DCC_Namespace)</DCC_Namespace>
         <BT_BuildType>Debug</BT_BuildType>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
@@ -94,13 +103,8 @@
         <DCCReference Include="rtl.dcp"/>
         <DCCReference Include="vcl.dcp"/>
         <DCCReference Include="designide.dcp"/>
-        <DCCReference Include="vclimg.dcp"/>
-        <DCCReference Include="VclSmp.dcp"/>
-        <DCCReference Include="VittixAutoUpdater.Types.pas"/>
-        <DCCReference Include="VittixAutoUpdater.Engine.pas"/>
-        <DCCReference Include="VittixAutoUpdater.Network.pas"/>
-        <DCCReference Include="VittixAutoUpdater.Staging.pas"/>
-        <DCCReference Include="VittixAutoUpdater.VisualComponent.pas"/>
+        <DCCReference Include="vclx.dcp"/>
+        <DCCReference Include="VittixAutoUpdaterRuntime.dcp"/>
         <DCCReference Include="VittixAutoUpdater.ComponentReg.pas"/>
         <DCCReference Include="VittixAutoUpdater.PropertyEditors.pas"/>
         <BuildConfiguration Include="Base">
@@ -130,7 +134,6 @@
                 <Platform value="Win64x">True</Platform>
             </Platforms>
             <Deployment Version="5">
-                <DeployFile LocalName="..\..\..\..\Public\Documents\Embarcadero\Studio\21.0\Bpl\VittixAutoUpdaterDesign.bpl" Configuration="Debug" Class="ProjectOutput"/>
                 <DeployClass Name="AdditionalDebugSymbols">
                     <Platform Name="OSX32">
                         <Operation>1</Operation>
