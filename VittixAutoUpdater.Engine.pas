@@ -64,7 +64,6 @@ type
 {$IFDEF VITTIX_TEST_LOOPBACK}
     FInstallDriveTypeForTests: TInstallDriveTypeLookup;
 {$ENDIF}
-    function CheckRunningInstallLocation(out ErrorMessage: string): Boolean;
     FNetwork: TUpdateNetworkManager;
     FCurrentVersion: TAppVersion;
     FHasCurrentVersion: Boolean;
@@ -113,6 +112,7 @@ type
     procedure SetCurrentVersion(const Value: TAppVersion);
     procedure QueueCheckCompletion(OperationGeneration: Int64;
       const Action: TThreadProcedure);
+    function CheckRunningInstallLocation(out ErrorMessage: string): Boolean;
     function GetTempZipFile: string;
     function GetTempExtractPath: string;
     procedure CleanupTempFiles;
