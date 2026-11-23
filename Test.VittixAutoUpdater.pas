@@ -83,6 +83,7 @@ type
     [Test] procedure LoopbackHttpDownloadRetryResumeAndRedirects;
     [Test] procedure SignedManifestFetchRejectsTamperingAndUnknownKeys;
     [Test] procedure ManifestHttp404IsLoggedAndRetried;
+    [Test] procedure ManifestRedirectDiscardsResponseBody;
 {$ENDIF}
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
     [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
@@ -887,13 +888,21 @@ begin
     Exit;
   end;
 
+  if SameText(Document, '/redirect-manifest') then
+  begin
+    SendBody('This redirect body is not part of the signed manifest.', '', 302);
+    AResponseInfo.CustomHeaders.Values['Location'] := '/signed-manifest';
+    Exit;
+  end;
+
   if SameText(Document, '/signed-manifest') then
   begin
     SendBody(FManifestBody, '');
     Exit;
   end;
 
-  if SameText(Document, '/signed-manifest.sig') then
+  if SameText(Document, '/signed-manifest.sig') or
+     SameText(Document, '/redirect-manifest.sig') then
   begin
     SendBody(FSignatureBody, '');
     Exit;
@@ -1780,6 +1789,30 @@ end;
 {$ENDIF}
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
+procedure TVittixAutoUpdaterTests.ManifestRedirectDiscardsResponseBody;
+var
+  Server: TLoopbackUpdateServer;
+  Manager: TUpdateNetworkManager;
+  Manifest: TUpdateManifest;
+begin
+  Server := TLoopbackUpdateServer.Create;
+  Manager := TUpdateNetworkManager.Create;
+  try
+    Manager.AllowLoopbackHttpForTests := True;
+    Manager.RequireHttps := True;
+    Manager.ManifestPublicKey := FixturePublicKey;
+    Manager.MaxRetries := 1;
+    Manager.MaxManifestAgeDays := 36500;
+    // The fixture signature authenticates exactly the final response bytes.
+    Assert.IsTrue(Manager.FetchManifest([Server.Url('/redirect-manifest')],
+      'Demo', Manifest), Manager.LastError);
+    Assert.AreEqual('1.0.0.1', Manifest.Version.ToString);
+  finally
+    Manager.Free;
+    Server.Free;
+  end;
+end;
+
 procedure TVittixAutoUpdaterTests.ManifestHttp404IsLoggedAndRetried;
 var
   Server: TLoopbackUpdateServer;

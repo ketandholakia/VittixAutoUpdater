@@ -473,14 +473,19 @@ const
 var
   CurrentUrl, Location, NextUrl: string;
   Hop, I: Integer;
+  StartSize: Int64;
   IsRedirect: Boolean;
 begin
   CurrentUrl := Url;
+  StartSize := Stream.Size;
   Client.HandleRedirects := not RequireHttps;
   for Hop := 0 to MaxSecureRedirects do
   begin
     if not IsAllowedRequestUrl(CurrentUrl, RequireHttps, AllowLoopbackHttp) then
       raise ENetworkFatalException.Create('Insecure update URL rejected');
+    // Discard the previous hop body while retaining any resumed prefix.
+    Stream.Size := StartSize;
+    Stream.Position := StartSize;
     Result := Client.Get(CurrentUrl, Stream, RequestHeaders);
     IsRedirect := RequireHttps and
       ((Result.StatusCode = 301) or (Result.StatusCode = 302) or
