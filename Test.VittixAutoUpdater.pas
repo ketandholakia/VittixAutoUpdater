@@ -82,6 +82,7 @@ type
 {$IFDEF VITTIX_TEST_LOOPBACK}
     [Test] procedure LoopbackHttpDownloadRetryResumeAndRedirects;
     [Test] procedure SignedManifestFetchRejectsTamperingAndUnknownKeys;
+    [Test] procedure ManifestHttp404IsLoggedAndRetried;
 {$ENDIF}
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
     [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
@@ -877,6 +878,12 @@ begin
     AResponseInfo.ResponseNo := 302;
     AResponseInfo.CustomHeaders.Values['Location'] :=
       'http://localhost:' + IntToStr(FServer.Bindings[0].Port) + '/success';
+    Exit;
+  end;
+
+  if SameText(Document, '/manifest-404') then
+  begin
+    SendBody('missing', '', 404);
     Exit;
   end;
 
@@ -1773,6 +1780,38 @@ end;
 {$ENDIF}
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
+procedure TVittixAutoUpdaterTests.ManifestHttp404IsLoggedAndRetried;
+var
+  Server: TLoopbackUpdateServer;
+  Manager: TUpdateNetworkManager;
+  Manifest: TUpdateManifest;
+  Started: UInt64;
+  LoggedFailures: Integer;
+begin
+  Server := TLoopbackUpdateServer.Create;
+  Manager := TUpdateNetworkManager.Create;
+  try
+    Manager.AllowLoopbackHttpForTests := True;
+    Manager.ManifestPublicKey := FixturePublicKey;
+    Manager.MaxRetries := 2;
+    LoggedFailures := 0;
+    Manager.OnLog :=
+      procedure(const Msg: string)
+      begin
+        if (Pos('Manifest attempt', Msg) = 1) and (Pos('404', Msg) > 0) then
+          Inc(LoggedFailures);
+      end;
+    Started := GetTickCount64;
+    Assert.IsFalse(Manager.FetchManifest([Server.Url('/manifest-404')], 'Demo', Manifest));
+    Assert.AreEqual(2, LoggedFailures);
+    Assert.IsTrue(GetTickCount64 - Started >= 950, 'Expected retry backoff');
+    Assert.IsTrue(Pos('404', Manager.LastError) > 0);
+  finally
+    Manager.Free;
+    Server.Free;
+  end;
+end;
+
 procedure TVittixAutoUpdaterTests.SignedManifestFetchRejectsTamperingAndUnknownKeys;
 var
   Server: TLoopbackUpdateServer;
@@ -1781,6 +1820,7 @@ var
   TrustedKeys: TArray<string>;
   Manifest: TUpdateManifest;
   WrongKey: string;
+  FailedAttempts: Integer;
 begin
   Server := TLoopbackUpdateServer.Create;
   Manager := TUpdateNetworkManager.Create;
@@ -1824,8 +1864,19 @@ begin
     Server.ManifestBody := StringReplace(Server.ManifestBody,
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
       'ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', []);
+    Manager.MaxRetries := 3;
+    FailedAttempts := 0;
+    Manager.OnLog :=
+      procedure(const Msg: string)
+      begin
+        if Pos('Manifest attempt', Msg) = 1 then
+          Inc(FailedAttempts);
+      end;
     Assert.IsFalse(Manager.FetchManifest(Urls, 'Demo', Manifest),
       'a package checksum modified after signing must be rejected');
+    Assert.AreEqual(1, FailedAttempts);
+    Assert.IsTrue(Pos('signature verification failed', Manager.LastError) > 0);
+    Manager.MaxRetries := 1;
     Server.ManifestBody := StringReplace(Server.ManifestBody,
       'ca7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', []);

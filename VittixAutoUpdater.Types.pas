@@ -166,6 +166,7 @@ type
   // ================================
   EUpdaterException = class(Exception);
   ENetworkException = class(EUpdaterException);
+  ENetworkFatalException = class(ENetworkException);
   EFileSystemException = class(EUpdaterException);
   EVersionException = class(EUpdaterException);
 

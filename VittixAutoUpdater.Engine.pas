@@ -90,6 +90,8 @@ type
 {$ENDIF}
 
     function IsSafeToApply: Boolean;
+    function GetOnLog: TNetworkLogEvent;
+    procedure SetOnLog(const Value: TNetworkLogEvent);
     procedure SetOnSecurityWarning(const Value: TSecurityWarningEvent);
 
   public
@@ -137,6 +139,7 @@ type
       read FRestartAfterInstall write FRestartAfterInstall;
     property OnRestartRequired: TNotifyEvent
       read FOnRestartRequired write FOnRestartRequired;
+    property OnLog: TNetworkLogEvent read GetOnLog write SetOnLog;
     property OnSecurityWarning: TSecurityWarningEvent
       read FOnSecurityWarning write SetOnSecurityWarning;
 
@@ -1271,7 +1274,7 @@ begin
 
         if not Success then
         begin
-          ErrorMsg := 'Failed to fetch update manifest';
+          ErrorMsg := FNetwork.LastError;
           QueueCheckCompletion(OperationGeneration,
             procedure
             begin
@@ -1396,6 +1399,16 @@ begin
   );
   FCheckThread.FreeOnTerminate := False;
   FCheckThread.Start;
+end;
+
+function TUpdateEngine.GetOnLog: TNetworkLogEvent;
+begin
+  Result := FNetwork.OnLog;
+end;
+
+procedure TUpdateEngine.SetOnLog(const Value: TNetworkLogEvent);
+begin
+  FNetwork.OnLog := Value;
 end;
 
 procedure TUpdateEngine.SetOnSecurityWarning(const Value: TSecurityWarningEvent);

@@ -22,6 +22,7 @@ type
     FUserAgent: string;
     FProxy: string;
     FOnLog: TNetworkLogEvent;
+    FLastError: string;
     FHmacKey: string;
     FRequireHttps: Boolean;
 {$IFDEF VITTIX_TEST_LOOPBACK}
@@ -45,6 +46,7 @@ type
     function LoopbackHttpAllowedForTests: Boolean;
 
     procedure Log(const Msg: string);
+    procedure WaitBeforeRetry(DelayMs: Integer);
     procedure ReceiveDataHandler(
       const Sender: TObject;
       AContentLength, AReadCount: Int64;
@@ -84,6 +86,7 @@ type
       read FMaxManifestAgeDays write FMaxManifestAgeDays;
     property UserAgent: string read FUserAgent write FUserAgent;
     property Proxy: string read FProxy write FProxy;
+    property LastError: string read FLastError;
     property OnLog: TNetworkLogEvent read FOnLog write FOnLog;
 
     // Deprecated compatibility property; HMAC is no longer used to validate
@@ -477,7 +480,7 @@ begin
   for Hop := 0 to MaxSecureRedirects do
   begin
     if not IsAllowedRequestUrl(CurrentUrl, RequireHttps, AllowLoopbackHttp) then
-      raise ENetworkException.Create('Insecure update URL rejected');
+      raise ENetworkFatalException.Create('Insecure update URL rejected');
     Result := Client.Get(CurrentUrl, Stream, RequestHeaders);
     IsRedirect := RequireHttps and
       ((Result.StatusCode = 301) or (Result.StatusCode = 302) or
@@ -486,7 +489,7 @@ begin
     if not IsRedirect then
       Exit;
     if not IsSecureRedirectHopAllowed(Hop) then
-      raise ENetworkException.Create('Too many HTTPS redirects (maximum 5)');
+      raise ENetworkFatalException.Create('Too many HTTPS redirects (maximum 5)');
     Location := '';
     for I := 0 to High(Result.Headers) do
       if SameText(Result.Headers[I].Name, 'Location') then
@@ -496,7 +499,7 @@ begin
       end;
     if not TryResolveRequestRedirect(
       CurrentUrl, Location, AllowLoopbackHttp, NextUrl) then
-      raise ENetworkException.Create(
+      raise ENetworkFatalException.Create(
         'HTTPS redirect rejected: invalid target or HTTPS downgrade');
     CurrentUrl := NextUrl;
   end;
@@ -517,7 +520,7 @@ begin
   for Hop := 0 to MaxSecureRedirects do
   begin
     if not IsAllowedRequestUrl(CurrentUrl, RequireHttps, AllowLoopbackHttp) then
-      raise ENetworkException.Create('Insecure update URL rejected');
+      raise ENetworkFatalException.Create('Insecure update URL rejected');
     Result := Client.Head(CurrentUrl);
     IsRedirect := RequireHttps and
       ((Result.StatusCode = 301) or (Result.StatusCode = 302) or
@@ -529,7 +532,7 @@ begin
       Exit;
     end;
     if not IsSecureRedirectHopAllowed(Hop) then
-      raise ENetworkException.Create('Too many HTTPS redirects (maximum 5)');
+      raise ENetworkFatalException.Create('Too many HTTPS redirects (maximum 5)');
     Location := '';
     for I := 0 to High(Result.Headers) do
       if SameText(Result.Headers[I].Name, 'Location') then
@@ -539,7 +542,7 @@ begin
       end;
     if not TryResolveRequestRedirect(
       CurrentUrl, Location, AllowLoopbackHttp, NextUrl) then
-      raise ENetworkException.Create(
+      raise ENetworkFatalException.Create(
         'HTTPS redirect rejected: invalid target or HTTPS downgrade');
     CurrentUrl := NextUrl;
   end;
@@ -799,11 +802,11 @@ begin
       SigStream.ReadBuffer(SigBytes[0], SigStream.Size);
 
     if FSizeLimitExceeded or (Length(SigBytes) > 1024) then
-      raise ENetworkException.Create('Manifest signature envelope is too large');
+      raise ENetworkFatalException.Create('Manifest signature envelope is too large');
     EnvelopeText := TEncoding.UTF8.GetString(SigBytes);
     if not TryParseManifestSignatureEnvelope(
       EnvelopeText, KeyId, SignatureText) then
-      raise ENetworkException.Create(
+      raise ENetworkFatalException.Create(
         'Manifest signature envelope is malformed or uses an unsupported algorithm');
     TrustedKeys := Copy(FManifestTrustedPublicKeys);
     if Trim(FManifestPublicKey) <> '' then
@@ -812,10 +815,10 @@ begin
       TrustedKeys[High(TrustedKeys)] := FManifestPublicKey;
     end;
     if Length(TrustedKeys) = 0 then
-      raise ENetworkException.Create(
+      raise ENetworkFatalException.Create(
         'Manifest signature verification is enabled but no public key is configured');
     if not IsTrustedManifestKeyId(KeyId, TrustedKeys) then
-      raise ENetworkException.CreateFmt(
+      raise ENetworkFatalException.CreateFmt(
         'Unknown manifest signing key identifier: %s', [KeyId]);
     TrustedKey := '';
     for I := 0 to High(TrustedKeys) do
@@ -827,10 +830,10 @@ begin
     try
       SigBytes := TNetEncoding.Base64.DecodeStringToBytes(SignatureText);
     except
-      raise ENetworkException.Create('Manifest signature is not valid Base64');
+      raise ENetworkFatalException.Create('Manifest signature is not valid Base64');
     end;
     if not VerifyManifestSignatureBytes(ManifestBytes, SigBytes, TrustedKey) then
-      raise ENetworkException.Create(
+      raise ENetworkFatalException.Create(
         'Manifest signature verification failed - refusing untrusted manifest');
 
     Log('Manifest signature verified OK');
@@ -907,6 +910,20 @@ begin
 
     FLastProgressTick := CurrentTick;
     Abort := FCancelDownload;
+  end;
+end;
+
+procedure TUpdateNetworkManager.WaitBeforeRetry(DelayMs: Integer);
+var
+  SliceMs: Integer;
+begin
+  while (DelayMs > 0) and not FCancelDownload do
+  begin
+    SliceMs := DelayMs;
+    if SliceMs > 100 then
+      SliceMs := 100;
+    TThread.Sleep(SliceMs);
+    Dec(DelayMs, SliceMs);
   end;
 end;
 
@@ -1013,13 +1030,21 @@ var
   Checksum: string;
   I: Integer;
   TrustedKeys: TArray<string>;
+
+  procedure FailConfiguration(const Msg: string);
+  begin
+    FLastError := Msg;
+    raise ENetworkFatalException.Create(Msg);
+  end;
+
 begin
   Result := False;
   Manifest := TUpdateManifest.Empty;
+  FLastError := '';
   FCancelDownload := False;
 
   if not FVerifyManifestSignature and not FAllowInsecureUnsignedManifests then
-    raise ENetworkException.Create(
+    FailConfiguration(
       'Manifest signature verification is mandatory; unsigned mode requires '
       + 'AllowInsecureUnsignedManifests=True');
 
@@ -1032,13 +1057,18 @@ begin
       TrustedKeys[High(TrustedKeys)] := FManifestPublicKey;
     end;
     if Length(TrustedKeys) = 0 then
-      raise ENetworkException.Create(
+      FailConfiguration(
         'Manifest signature verification is enabled but no public key is configured');
     for I := 0 to High(TrustedKeys) do
       if ManifestSigningKeyId(TrustedKeys[I]) = '' then
-        raise ENetworkException.Create(
+        FailConfiguration(
           'Manifest trusted key configuration is malformed');
   end;
+
+  if Length(Urls) = 0 then
+    FLastError := 'No manifest URLs are configured'
+  else if FMaxRetries < 1 then
+    FLastError := 'No manifest attempts are configured';
 
   for Url in Urls do
   begin
@@ -1057,10 +1087,7 @@ begin
         Client := THttpClient(CreateHttpClient);
         try
           Client.HandleRedirects := not FRequireHttps;
-          if not IsAllowedRequestUrl(
-            Url, FRequireHttps, LoopbackHttpAllowedForTests) then
-            raise ENetworkException.Create(
-              'Manifest URL must use HTTPS');
+
           Stream.Size := 0;
           Stream.Position := 0;
           FExpectedDownloadSize := 1024 * 1024 - 64 * 1024;
@@ -1076,17 +1103,17 @@ begin
 
             if FRequireHttps and
                (Response.StatusCode >= 300) and (Response.StatusCode < 400) then
-              raise ENetworkException.Create(
+              raise ENetworkFatalException.Create(
                 'HTTPS redirect rejected; configure the final HTTPS manifest URL');
 
             if (Response.StatusCode >= 200) and
                (Response.StatusCode < 300) then
             begin
               if FSizeLimitExceeded then
-                raise ENetworkException.Create(
+                raise ENetworkFatalException.Create(
                   'Manifest exceeds the configured response size limit');
               if Stream.Size > 1024 * 1024 then
-                raise ENetworkException.Create(
+                raise ENetworkFatalException.Create(
                   'Manifest exceeds the 1 MiB size limit');
               if FCancelDownload then
                 Break;
@@ -1110,35 +1137,39 @@ begin
               if not TryParseManifestJson(JsonStr, AppName,
                 FMaxManifestAgeDays, CurrentUtc, FVerifyManifestSignature,
                 Manifest, ErrorMessage) then
-                raise ENetworkException.Create(ErrorMessage);
+                raise ENetworkFatalException.Create(ErrorMessage);
               if FVerifyManifestSignature then
               begin
                 Checksum := NormalizeChecksum(Manifest.Checksum);
                 if Manifest.FileSize <= 0 then
-                  raise ENetworkException.Create(
+                  raise ENetworkFatalException.Create(
                     'Signed manifest must include a positive package file_size');
                 if Length(Checksum) <> 64 then
-                  raise ENetworkException.Create(
+                  raise ENetworkFatalException.Create(
                     'Signed manifest must include a SHA-256 package checksum');
                 for I := 1 to Length(Checksum) do
                   if not CharInSet(Checksum[I], ['0'..'9', 'a'..'f', 'A'..'F']) then
-                    raise ENetworkException.Create(
+                    raise ENetworkFatalException.Create(
                       'Signed manifest package checksum is malformed');
               end;
+              FLastError := '';
               Result := True;
               Exit;
             end;
+            raise ENetworkException.CreateFmt('Manifest HTTP error %d: %s',
+              [Response.StatusCode, Response.StatusText]);
 
           except
             on E: Exception do
             begin
+              FLastError := E.Message;
               Log(Format('Manifest attempt %d failed: %s',
                 [Retry, E.Message]));
 
-              if Retry = FMaxRetries then
+              if (E is ENetworkFatalException) or (Retry = FMaxRetries) then
                 Break;
 
-              TThread.Sleep(1000 * Retry);
+              WaitBeforeRetry(1000 * Retry);
             end;
           end;
         finally
@@ -1365,6 +1396,8 @@ begin
         end;
         Log(Format('Download attempt %d/%d failed: %s',
           [Attempt, Attempts, E.Message]));
+        if E is ENetworkFatalException then
+          Break;
         PreservePartial := CanResume and Assigned(FileStream) and
           FileExists(WorkingPath) and
           (GetLocalFileSize(WorkingPath) < RemoteSize);
@@ -1413,7 +1446,7 @@ begin
        not FSizeLimitExceeded then
     begin
       BackoffMs := DownloadRetryDelayMs(Attempt);
-      TThread.Sleep(BackoffMs);
+      WaitBeforeRetry(BackoffMs);
     end;
   end;
 
