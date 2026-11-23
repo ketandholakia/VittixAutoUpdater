@@ -7,7 +7,7 @@ unit VittixAutoUpdater.Engine;
 interface
 
 uses
-  Classes, SysUtils, SyncObjs,
+  Classes, SysUtils, SyncObjs, System.Generics.Collections,
   VittixAutoUpdater.Types,
   VittixAutoUpdater.Network;
 
@@ -56,7 +56,11 @@ type
     FStagingPath: string;
     FStagingBase: string;
     FLastManifest: TUpdateManifest;
-    FCancelRequested: Boolean;
+    FCancelRequested: Integer;
+    FWorkerActive: Boolean;
+    FResetPending: Boolean;
+    FSynchronizeEvents: Boolean;
+    FQueuedEvents: TQueue<TThreadProcedure>;
     FStateLock: TCriticalSection;
     FCheckOperationGeneration: Int64;
     FRestartAfterInstall: Boolean;
@@ -75,6 +79,16 @@ type
     FOnZipBeforeCompleteForTests: TNotifyEvent;
 {$ENDIF}
 
+    function CancelRequested: Boolean;
+    procedure PrepareCancellation;
+    function CancelLocked: Boolean;
+    procedure FinishWorker;
+    procedure CompleteResetLocked;
+    procedure QueueEvent(const Action: TThreadProcedure);
+    procedure DispatchQueuedEvent;
+    procedure NotifyState(NewState: TUpdateState; const StatusMsg: string);
+    procedure NotifyProgress(Sender: TObject; BytesRead, TotalBytes: Int64;
+      var Abort: Boolean);
     procedure SetState(NewState: TUpdateState; const StatusMsg: string);
     procedure SetConfig(const Value: TUpdaterConfig);
     procedure QueueCheckCompletion(OperationGeneration: Int64;
@@ -143,6 +157,7 @@ type
     property OnSecurityWarning: TSecurityWarningEvent
       read FOnSecurityWarning write SetOnSecurityWarning;
 
+    property SynchronizeEvents: Boolean read FSynchronizeEvents write FSynchronizeEvents;
     property OnStateChange: TUpdateStateEvent
       read FOnStateChange write FOnStateChange;
 
@@ -158,10 +173,9 @@ uses
 {$ENDIF}
   {$IFDEF DELPHIXE_UP}
   System.Zip, System.IOUtils, System.Types, System.StrUtils,
-  System.Generics.Collections,
   VittixAutoUpdater.Staging;
   {$ELSE}
-  Zip, IOUtils, StrUtils, Generics.Collections,
+  Zip, IOUtils, StrUtils,
   VittixAutoUpdater.Staging;
   {$ENDIF}
 
@@ -192,7 +206,7 @@ begin
 {$ENDIF}
   FEngine.FStateLock.Acquire;
   try
-    CancelRequested := FEngine.FCancelRequested;
+    CancelRequested := FEngine.CancelRequested;
   finally
     FEngine.FStateLock.Release;
   end;
@@ -1024,6 +1038,7 @@ begin
 {$ENDIF}
   FConfig := Config;
   FStateLock := TCriticalSection.Create;
+  FQueuedEvents := TQueue<TThreadProcedure>.Create;
   FRestartAfterInstall := True;
   FNetwork := TUpdateNetworkManager.Create;
   SetConfig(Config);
@@ -1033,7 +1048,7 @@ begin
   FState := usIdle;
   FDownloadedFile := '';
   FExtractPath := '';
-  FCancelRequested := False;
+  PrepareCancellation;
 
   try
 {$IFDEF MSWINDOWS}
@@ -1063,7 +1078,7 @@ function TUpdateEngine.ExtractArchiveForTests(const ZipFile, DestPath: string): 
 begin
   FStateLock.Acquire;
   try
-    FCancelRequested := False;
+    PrepareCancellation;
   finally
     FStateLock.Release;
   end;
@@ -1110,19 +1125,102 @@ begin
     FreeAndNil(FCheckThread);
   end;
   CleanupTempFiles;
+  TThread.RemoveQueuedEvents(DispatchQueuedEvent);
+  FQueuedEvents.Free;
   FNetwork.Free;
   FStateLock.Free;
   inherited;
 end;
 
+function TUpdateEngine.CancelRequested: Boolean;
+begin
+  Result := TInterlocked.Read(FCancelRequested) <> 0;
+end;
+
+procedure TUpdateEngine.PrepareCancellation;
+begin
+  TInterlocked.Exchange(FCancelRequested, 0);
+  FNetwork.ClearCancellation;
+end;
+
+procedure TUpdateEngine.QueueEvent(const Action: TThreadProcedure);
+begin
+  FStateLock.Acquire;
+  try
+    FQueuedEvents.Enqueue(Action);
+    TThread.Queue(nil, DispatchQueuedEvent);
+  finally
+    FStateLock.Release;
+  end;
+end;
+
+procedure TUpdateEngine.DispatchQueuedEvent;
+var
+  Action: TThreadProcedure;
+begin
+  FStateLock.Acquire;
+  try
+    if FQueuedEvents.Count = 0 then
+      Exit;
+    Action := FQueuedEvents.Dequeue;
+  finally
+    FStateLock.Release;
+  end;
+  Action();
+end;
+
+procedure TUpdateEngine.NotifyState(NewState: TUpdateState; const StatusMsg: string);
+var
+  QueuedMessage: string;
+begin
+  if not Assigned(FOnStateChange) then
+    Exit;
+  if FSynchronizeEvents and (GetCurrentThreadId <> MainThreadID) then
+  begin
+    QueuedMessage := StatusMsg;
+    QueueEvent(
+      procedure
+      begin
+        if Assigned(FOnStateChange) then
+          FOnStateChange(Self, NewState, QueuedMessage);
+      end);
+  end
+  else
+    FOnStateChange(Self, NewState, StatusMsg);
+end;
+
+procedure TUpdateEngine.NotifyProgress(Sender: TObject; BytesRead, TotalBytes: Int64;
+  var Abort: Boolean);
+begin
+  if not Assigned(FOnDownloadProgress) then
+    Exit;
+  if FSynchronizeEvents and (GetCurrentThreadId <> MainThreadID) then
+    QueueEvent(
+      procedure
+      var
+        CancelDownload: Boolean;
+      begin
+        CancelDownload := False;
+        if Assigned(FOnDownloadProgress) then
+          FOnDownloadProgress(Self, BytesRead, TotalBytes, CancelDownload);
+        if CancelDownload then
+          Cancel;
+      end)
+  else
+    FOnDownloadProgress(Sender, BytesRead, TotalBytes, Abort);
+end;
+
 procedure TUpdateEngine.SetState(NewState: TUpdateState; const StatusMsg: string);
 begin
-  if FCancelRequested and (NewState <> usCancelled) then
-    Exit;
-
-  FState := NewState;
-  if Assigned(FOnStateChange) then
-    FOnStateChange(Self, NewState, StatusMsg);
+  FStateLock.Acquire;
+  try
+    if CancelRequested and (NewState <> usCancelled) then
+      Exit;
+    FState := NewState;
+  finally
+    FStateLock.Release;
+  end;
+  NotifyState(NewState, StatusMsg);
 end;
 
 procedure TUpdateEngine.SetConfig(const Value: TUpdaterConfig);
@@ -1195,7 +1293,7 @@ var
   ErrorMsg, TrustedKey: string;
   OperationGeneration: Int64;
 begin
-  if not (FState in [usIdle, usAvailable, usFailed, usCancelled]) then
+  if FWorkerActive or not (FState in [usIdle, usAvailable, usFailed, usCancelled]) then
     Exit;
 
   if Assigned(FCheckThread) then
@@ -1249,9 +1347,17 @@ begin
       end;
   end;
 
-  FCancelRequested := False;
-  OperationGeneration := TInterlocked.Increment(FCheckOperationGeneration);
-  SetState(usChecking, 'Checking for updates...');
+  FStateLock.Acquire;
+  try
+    if FWorkerActive or not (FState in [usIdle, usAvailable, usFailed, usCancelled]) then
+      Exit;
+    PrepareCancellation;
+    OperationGeneration := TInterlocked.Increment(FCheckOperationGeneration);
+    FState := usChecking;
+  finally
+    FStateLock.Release;
+  end;
+  NotifyState(usChecking, 'Checking for updates...');
   if OperationGeneration <> TInterlocked.Read(FCheckOperationGeneration) then
     Exit;
 
@@ -1272,9 +1378,9 @@ begin
           FNetwork.FetchManifest(
             FConfig.ManifestUrls,
             FConfig.AppName,
-            Manifest);
+            Manifest, False);
 
-        if FCancelRequested then
+        if CancelRequested then
           Exit;
 
         if not Success then
@@ -1314,7 +1420,7 @@ begin
         begin
           FStateLock.Acquire;
           try
-            if FCancelRequested then
+            if CancelRequested then
               Exit;
             TrustStateSaved := PersistManifestRollbackFloor(Manifest, ErrorMsg);
           finally
@@ -1457,55 +1563,67 @@ begin
 
   FStateLock.Acquire;
   try
-    if FState <> usAvailable then
+    if FWorkerActive or (FState <> usAvailable) then
       Exit;
+    PrepareCancellation;
+    FWorkerActive := True;
     FState := usDownloading;
   finally
     FStateLock.Release;
   end;
 
-  if FConfig.RequireChecksum and (Trim(Manifest.Checksum) = '') then
-  begin
-    SetState(usFailed, 'Manifest has no checksum - refusing to download unverifiable update');
-    Exit;
-  end;
-
-  FCancelRequested := False;
-  if Assigned(FOnStateChange) then
-    FOnStateChange(Self, usDownloading, 'Downloading update...');
-
   try
-    FDownloadedFile := GetTempZipFile;
-
-    Result :=
-      FNetwork.DownloadFile(
-        Manifest.DownloadUrl,
-        FDownloadedFile,
-        FOnDownloadProgress,
-        Manifest.Checksum,
-        Manifest.FileSize);
-
-    if Result then
-      SetState(usReady, 'Update ready to install')
-    else if FCancelRequested or (FState = usCancelled) then
+    if FConfig.RequireChecksum and (Trim(Manifest.Checksum) = '') then
     begin
-      SetState(usCancelled, 'Download cancelled');
-      CleanupTempFiles;
-    end
-    else
-    begin
-      SetState(usFailed, 'Download failed');
-      CleanupTempFiles;
+      SetState(usFailed, 'Manifest has no checksum - refusing to download unverifiable update');
+      Exit;
     end;
 
-  except
-    on E: Exception do
-    begin
-      SetState(usFailed, 'Download error: ' + E.Message);
-      CleanupTempFiles;
-      Result := False;
+    NotifyState(usDownloading, 'Downloading update...');
+    if CancelRequested then
+      Exit;
+
+    try
+      FDownloadedFile := GetTempZipFile;
+
+      Result :=
+        FNetwork.DownloadFile(
+          Manifest.DownloadUrl,
+          FDownloadedFile,
+          NotifyProgress,
+          Manifest.Checksum,
+          Manifest.FileSize, False);
+      FStateLock.Acquire;
+      try
+        Result := Result and not CancelRequested;
+        if Result then
+          FState := usReady;
+      finally
+        FStateLock.Release;
+      end;
+
+      if not Result then
+      begin
+        if CancelRequested then
+          SetState(usCancelled, 'Download cancelled')
+        else
+          SetState(usFailed, 'Download failed');
+        CleanupTempFiles;
+      end;
+
+    except
+      on E: Exception do
+      begin
+        SetState(usFailed, 'Download error: ' + E.Message);
+        CleanupTempFiles;
+        Result := False;
+      end;
     end;
+  finally
+    FinishWorker;
   end;
+  if Result and (FState = usReady) then
+    NotifyState(usReady, 'Update ready to install');
 end;
 
 function TUpdateEngine.ExtractUpdate(
@@ -1611,7 +1729,7 @@ begin
   Paths := TDictionary<string, string>.Create;
   ZipCancellationObserver := TZipCancellationObserver.Create(Self);
   try
-    if FCancelRequested then
+    if CancelRequested then
       raise EAbort.Create('ZIP extraction cancelled');
     ZipArchive := TZipFile.Create;
     try
@@ -1641,7 +1759,7 @@ begin
       // Validate the complete central directory before creating any payload.
       for I := 0 to ZipArchive.FileCount - 1 do
       begin
-        if FCancelRequested then
+        if CancelRequested then
           raise EAbort.Create('ZIP extraction cancelled');
         EntryName := ZipArchive.FileNames[I];
         if not IsSafeZipEntryPath(DestPath, EntryName, EntryPath) then
@@ -1720,7 +1838,7 @@ begin
       end;
 
       {$IFDEF MSWINDOWS}
-      if FCancelRequested then
+      if CancelRequested then
         raise EAbort.Create('ZIP extraction cancelled');
       if not IsPathWithoutReparsePoints(ExtractFileDir(DestPath)) then
         raise EFileSystemException.Create(
@@ -1741,7 +1859,7 @@ begin
       TotalUncompressed := 0;
       for I := 0 to High(Entries) do
       begin
-        if FCancelRequested then
+        if CancelRequested then
           raise EAbort.Create('ZIP extraction cancelled');
         EntryPath := Entries[I].Path;
         ParentPath := ExtractFileDir(EntryPath);
@@ -1770,7 +1888,7 @@ begin
           try
             ZipArchive.Read(I, InputStream, Header, True);
             repeat
-              if FCancelRequested then
+              if CancelRequested then
                 raise EAbort.Create('ZIP extraction cancelled');
               BytesRead := InputStream.Read(Buffer, SizeOf(Buffer));
               if BytesRead = 0 then
@@ -1779,7 +1897,7 @@ begin
               if Assigned(FOnZipOutputForTests) then
                 FOnZipOutputForTests(Self);
 {$ENDIF}
-              if FCancelRequested then
+              if CancelRequested then
                 raise EAbort.Create('ZIP extraction cancelled');
               if (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveSingleEntryBytes) - ActualEntryBytes) or
                  (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - TotalUncompressed) then
@@ -1814,7 +1932,7 @@ begin
       if Assigned(FOnZipBeforeCompleteForTests) then
         FOnZipBeforeCompleteForTests(Self);
 {$ENDIF}
-      if FCancelRequested then
+      if CancelRequested then
         raise EAbort.Create('ZIP extraction cancelled');
       Result := True;
     finally
@@ -1851,85 +1969,100 @@ begin
 
   FStateLock.Acquire;
   try
-    if (FState <> usReady) or not IsSafeToApply then
+    if FWorkerActive or (FState <> usReady) or not IsSafeToApply then
       Exit;
+    PrepareCancellation;
+    FWorkerActive := True;
     FState := usExtracting;
   finally
     FStateLock.Release;
   end;
 
-  FCancelRequested := False;
-  if Assigned(FOnStateChange) then
-    FOnStateChange(Self, usExtracting, 'Extracting update...');
-
   try
-    FExtractPath := GetTempExtractPath;
+    NotifyState(usExtracting, 'Extracting update...');
 
-    if not ExtractUpdate(FDownloadedFile, FExtractPath) then
-    begin
-      CleanupTempFiles;
-      Exit;
-    end;
+    try
+      FExtractPath := GetTempExtractPath;
 
-    SetState(usApplying, 'Installing update...');
-
-{$IFDEF MSWINDOWS}
-    Result := ApplyUpdateWindows(FExtractPath);
-{$ELSE}
-    raise EUpdaterException.Create(
-      'VittixAutoUpdater is not supported on this platform (Windows only)');
-{$ENDIF}
-
-    if Result then
-    begin
-{$IFDEF MSWINDOWS}
-      // The helper owns the private extracted tree after it is launched.
-      // Prevent Destroy/CleanupTempFiles from racing its copy.
-      FExtractPath := '';
-      FDownloadedFile := '';
-      FStagingPath := '';
-      FStagingBase := '';
-{$ENDIF}
-      SetState(usComplete, 'Update installed successfully');
-{$IFDEF MSWINDOWS}
-      if FRestartAfterInstall then
+      if not ExtractUpdate(FDownloadedFile, FExtractPath) then
       begin
-        if Assigned(FOnRestartRequired) then
-          FOnRestartRequired(Self)
-        else if GetCurrentThreadId = MainThreadID then
-        begin
-          if Assigned(Application) then
-            Application.Terminate
-          else
-            ExitProcess(0);
-        end
-        else
-        begin
-          TerminateAction := procedure
-            begin
-              if Assigned(Application) then
-                Application.Terminate
-              else
-                ExitProcess(0);
-            end;
-          TThread.Synchronize(nil, TerminateAction);
-        end;
+        CleanupTempFiles;
+        Exit;
       end;
-{$ENDIF}
-    end
-    else
-    begin
-      SetState(usFailed, 'Failed to apply update');
-      CleanupTempFiles;
-    end;
 
-  except
-    on E: Exception do
-    begin
-      SetState(usFailed, 'Update error: ' + E.Message);
-      CleanupTempFiles;
-      Result := False;
+      FStateLock.Acquire;
+      try
+        if CancelRequested then
+        begin
+          CleanupTempFiles;
+          Exit;
+        end;
+        FState := usApplying;
+      finally
+        FStateLock.Release;
+      end;
+      NotifyState(usApplying, 'Installing update...');
+
+  {$IFDEF MSWINDOWS}
+      Result := ApplyUpdateWindows(FExtractPath);
+  {$ELSE}
+      raise EUpdaterException.Create(
+        'VittixAutoUpdater is not supported on this platform (Windows only)');
+  {$ENDIF}
+
+      if Result then
+      begin
+  {$IFDEF MSWINDOWS}
+        // The helper owns the private extracted tree after it is launched.
+        // Prevent Destroy/CleanupTempFiles from racing its copy.
+        FExtractPath := '';
+        FDownloadedFile := '';
+        FStagingPath := '';
+        FStagingBase := '';
+  {$ENDIF}
+        SetState(usComplete, 'Update installed successfully');
+  {$IFDEF MSWINDOWS}
+        if FRestartAfterInstall then
+        begin
+          if Assigned(FOnRestartRequired) then
+            FOnRestartRequired(Self)
+          else if GetCurrentThreadId = MainThreadID then
+          begin
+            if Assigned(Application) then
+              Application.Terminate
+            else
+              ExitProcess(0);
+          end
+          else
+          begin
+            TerminateAction := procedure
+              begin
+                if Assigned(Application) then
+                  Application.Terminate
+                else
+                  ExitProcess(0);
+              end;
+            TThread.Synchronize(nil, TerminateAction);
+          end;
+        end;
+  {$ENDIF}
+      end
+      else
+      begin
+        SetState(usFailed, 'Failed to apply update');
+        CleanupTempFiles;
+      end;
+
+    except
+      on E: Exception do
+      begin
+        SetState(usFailed, 'Update error: ' + E.Message);
+        CleanupTempFiles;
+        Result := False;
+      end;
     end;
+  finally
+    FinishWorker;
   end;
 end;
 
@@ -2014,23 +2147,55 @@ begin
 end;
 {$ENDIF}
 
+function TUpdateEngine.CancelLocked: Boolean;
+begin
+  Result := FState in [usChecking, usDownloading, usExtracting];
+  if Result then
+  begin
+    TInterlocked.Exchange(FCancelRequested, 1);
+    TInterlocked.Increment(FCheckOperationGeneration);
+    FNetwork.CancelCurrentOperation;
+    FState := usCancelled;
+  end;
+end;
+
 procedure TUpdateEngine.Cancel;
+var
+  Changed: Boolean;
 begin
   FStateLock.Acquire;
   try
-    if FState in [usChecking, usDownloading, usExtracting] then
-    begin
-      FCancelRequested := True;
-      TInterlocked.Increment(FCheckOperationGeneration);
-    end;
+    Changed := CancelLocked;
   finally
     FStateLock.Release;
   end;
-  if FCancelRequested and (FState in [usChecking, usDownloading, usExtracting]) then
-  begin
-    FNetwork.CancelCurrentOperation;
-    SetState(usCancelled, 'Update cancelled');
+  if Changed then
+    NotifyState(usCancelled, 'Update cancelled');
+end;
+
+procedure TUpdateEngine.CompleteResetLocked;
+begin
+  CleanupTempFiles;
+  FLastManifest := TUpdateManifest.Empty;
+  FResetPending := False;
+  FState := usIdle;
+end;
+
+procedure TUpdateEngine.FinishWorker;
+var
+  WasReset: Boolean;
+begin
+  FStateLock.Acquire;
+  try
+    FWorkerActive := False;
+    WasReset := FResetPending;
+    if WasReset then
+      CompleteResetLocked;
+  finally
+    FStateLock.Release;
   end;
+  if WasReset then
+    NotifyState(usIdle, 'Ready to check for updates');
 end;
 
 function RollbackExecutable(const CurrentExe: string): Boolean;
@@ -2065,20 +2230,24 @@ begin
 end;
 
 procedure TUpdateEngine.Reset;
+var
+  Deferred, Cancelled: Boolean;
 begin
-  // Cancel any ongoing operations
-  Cancel;
-
-  // Clean up temporary files
-  CleanupTempFiles;
-
-  FCancelRequested := False;
-
-  // Reset state to idle
-  SetState(usIdle, 'Ready to check for updates');
-
-  // Clear last manifest
-  FLastManifest := TUpdateManifest.Empty;
+  FStateLock.Acquire;
+  try
+    Cancelled := CancelLocked;
+    Deferred := FWorkerActive;
+    if Deferred then
+      FResetPending := True
+    else
+      CompleteResetLocked;
+  finally
+    FStateLock.Release;
+  end;
+  if not Deferred then
+    NotifyState(usIdle, 'Ready to check for updates')
+  else if Cancelled then
+    NotifyState(usCancelled, 'Update cancelled');
 end;
 
 // Compatibility function implementation

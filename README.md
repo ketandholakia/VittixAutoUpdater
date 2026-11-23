@@ -478,6 +478,13 @@ begin
 end);
 ```
 
+### Engine events and cancellation
+
+SynchronizeEvents defaults to False. Set it to True on a standalone engine to deliver OnStateChange and OnDownloadProgress on the main thread. Worker notifications are queued, so call Cancel to stop work promptly. A cancellation requested by a queued progress handler takes effect when that handler runs. TVittixAutoUpdaterUI already marshals its events.
+
+Reset cancels active download or extraction and defers staging cleanup and the idle state until the worker finishes.
+
+
 ### Rollback on Failure
 
 Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as `config/settings.ini` to keep existing files. Missing files are installed from the payload. The list defaults to empty. On copy failure, the helper removes newly copied files, restores previous files and the executable, and restarts the old application after restoration succeeds.

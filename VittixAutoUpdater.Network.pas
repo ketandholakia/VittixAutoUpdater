@@ -35,7 +35,7 @@ type
 
     // State for progress callback
     FOnProgress: TDownloadProgressEvent;
-    FCancelDownload: Boolean;
+    FCancelDownload: Integer;
     FLastProgressTick: Cardinal;
     FExpectedDownloadSize: Int64;
     FDownloadOffset: Int64;
@@ -47,6 +47,7 @@ type
 
     procedure Log(const Msg: string);
     procedure WaitBeforeRetry(DelayMs: Integer);
+    function IsCancelled: Boolean;
     procedure ReceiveDataHandler(
       const Sender: TObject;
       AContentLength, AReadCount: Int64;
@@ -69,15 +70,16 @@ type
     // Fetch update manifest from URL (tries multiple mirrors)
     function FetchManifest(const Urls: TArray<string>;
       const AppName: string;
-      out Manifest: TUpdateManifest): Boolean;
+      out Manifest: TUpdateManifest; ResetCancellation: Boolean = True): Boolean;
 
     // Download file with progress tracking
     function DownloadFile(const Url, SavePath: string;
       OnProgress: TDownloadProgressEvent;
       const ExpectedChecksum: string = '';
-      const ExpectedSize: Int64 = -1): Boolean;
+      const ExpectedSize: Int64 = -1; ResetCancellation: Boolean = True): Boolean;
 
     procedure CancelCurrentOperation;
+    procedure ClearCancellation;
 
     // Properties
     property ConnectionTimeout: Integer read FConnectionTimeout write FConnectionTimeout;
@@ -153,7 +155,7 @@ uses
   System.JSON,
   System.NetEncoding,
   VittixAutoUpdater.Staging,
-  System.DateUtils,
+  System.DateUtils, System.SyncObjs,
   System.IOUtils;
 
 type
@@ -761,7 +763,7 @@ begin
 {$IFDEF VITTIX_TEST_LOOPBACK}
   FAllowLoopbackHttpForTests := False;
 {$ENDIF}
-  FCancelDownload := False;
+  ClearCancellation;
 end;
 
 function TUpdateNetworkManager.LoopbackHttpAllowedForTests: Boolean;
@@ -937,6 +939,9 @@ var
   CurrentTick: Cardinal;
   SizeMargin: Int64;
 begin
+  Abort := IsCancelled;
+  if Abort then
+    Exit;
   CurrentTick := Cardinal(GetTickCount64);
 
   if FExpectedDownloadSize > 0 then
@@ -960,13 +965,15 @@ begin
     if Assigned(FOnProgress) then
       if FExpectedDownloadSize > 0 then
         FOnProgress(Sender, FDownloadOffset + AReadCount,
-          FExpectedDownloadSize, FCancelDownload)
+          FExpectedDownloadSize, Abort)
       else
         FOnProgress(Sender, FDownloadOffset + AReadCount,
-          FDownloadOffset + AContentLength, FCancelDownload);
+          FDownloadOffset + AContentLength, Abort);
 
     FLastProgressTick := CurrentTick;
-    Abort := FCancelDownload;
+    if Abort then
+      CancelCurrentOperation;
+    Abort := IsCancelled;
   end;
 end;
 
@@ -974,7 +981,7 @@ procedure TUpdateNetworkManager.WaitBeforeRetry(DelayMs: Integer);
 var
   SliceMs: Integer;
 begin
-  while (DelayMs > 0) and not FCancelDownload do
+  while (DelayMs > 0) and not IsCancelled do
   begin
     SliceMs := DelayMs;
     if SliceMs > 100 then
@@ -984,9 +991,19 @@ begin
   end;
 end;
 
+procedure TUpdateNetworkManager.ClearCancellation;
+begin
+  TInterlocked.Exchange(FCancelDownload, 0);
+end;
+
+function TUpdateNetworkManager.IsCancelled: Boolean;
+begin
+  Result := TInterlocked.Read(FCancelDownload) <> 0;
+end;
+
 procedure TUpdateNetworkManager.CancelCurrentOperation;
 begin
-  FCancelDownload := True;
+  TInterlocked.Exchange(FCancelDownload, 1);
 end;
 
 function TryParseManifestJson(const JsonText, AppName: string;
@@ -1077,7 +1094,7 @@ end;
 function TUpdateNetworkManager.FetchManifest(
   const Urls: TArray<string>;
   const AppName: string;
-  out Manifest: TUpdateManifest): Boolean;
+  out Manifest: TUpdateManifest; ResetCancellation: Boolean): Boolean;
 var
   Url: string;
   Stream: TMemoryStream;
@@ -1102,7 +1119,8 @@ begin
   Result := False;
   Manifest := TUpdateManifest.Empty;
   FLastError := '';
-  FCancelDownload := False;
+  if ResetCancellation then
+    ClearCancellation;
 
   if not FVerifyManifestSignature and not FAllowInsecureUnsignedManifests then
     FailConfiguration(
@@ -1133,7 +1151,7 @@ begin
 
   for Url in Urls do
   begin
-    if FCancelDownload then
+    if IsCancelled then
       Exit(False);
 
     Log('Trying manifest URL: ' + Url);
@@ -1142,7 +1160,7 @@ begin
     try
       for Retry := 1 to FMaxRetries do
       begin
-        if FCancelDownload then
+        if IsCancelled then
           Break;
 
         Client := THttpClient(CreateHttpClient);
@@ -1176,7 +1194,7 @@ begin
               if Stream.Size > 1024 * 1024 then
                 raise ENetworkFatalException.Create(
                   'Manifest exceeds the 1 MiB size limit');
-              if FCancelDownload then
+              if IsCancelled then
                 Break;
 
               // Pull out the raw bytes first: this is what gets hashed for
@@ -1247,7 +1265,7 @@ function TUpdateNetworkManager.DownloadFile(
   const Url, SavePath: string;
   OnProgress: TDownloadProgressEvent;
   const ExpectedChecksum: string;
-  const ExpectedSize: Int64): Boolean;
+  const ExpectedSize: Int64; ResetCancellation: Boolean): Boolean;
 var
   HttpClient: THttpClient;
   FileStream: TStream;
@@ -1263,7 +1281,8 @@ var
 begin
   Result := False;
   FOnProgress := OnProgress;
-  FCancelDownload := False;
+  if ResetCancellation then
+    ClearCancellation;
   FExpectedDownloadSize := ExpectedSize;
   FSizeLimitExceeded := False;
   FLastProgressTick := Cardinal(GetTickCount64);
@@ -1304,7 +1323,7 @@ begin
     SysUtils.DeleteFile(SavePath);
   for Attempt := 1 to Attempts do
   begin
-    if FCancelDownload then
+    if IsCancelled then
       Break;
     HttpClient := THttpClient(CreateHttpClient);
     FileStream := nil;
@@ -1377,7 +1396,7 @@ begin
       Response := HttpGetFollowingSecureRedirects(
         HttpClient, FinalUrl, FileStream, FRequireHttps, RequestHeaders,
         LoopbackHttpAllowedForTests);
-      if FCancelDownload then
+      if IsCancelled then
         Break;
       if FSizeLimitExceeded then
         raise ENetworkException.CreateFmt(
@@ -1442,11 +1461,11 @@ begin
             [CleanExpected, ActualChecksum]);
       end;
 
-      Result := not FCancelDownload;
+      Result := not IsCancelled;
     except
       on E: Exception do
       begin
-        if FCancelDownload or FSizeLimitExceeded then
+        if IsCancelled or FSizeLimitExceeded then
         begin
           if FSizeLimitExceeded then
             Log('Download aborted after exceeding manifest file size')
@@ -1503,7 +1522,7 @@ begin
     if RetryFailed and not PreservePartial then
       PreviousPartialPath := '';
 
-    if not Result and (Attempt < Attempts) and not FCancelDownload and
+    if not Result and (Attempt < Attempts) and not IsCancelled and
        not FSizeLimitExceeded then
     begin
       BackoffMs := DownloadRetryDelayMs(Attempt);

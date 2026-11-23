@@ -126,6 +126,7 @@ type
     AvailableCount: Integer;
     FailedCount: Integer;
     DecisionCount: Integer;
+    ProgressCount: Integer;
     LastError: string;
     StateHistory: string;
     RecheckUpdater: TVittixAutoUpdaterUI;
@@ -134,6 +135,8 @@ type
     RecheckBusyStateObserved: Boolean;
     procedure StateChanged(Sender: TObject; NewState: TUpdateState;
       const Status: string);
+    procedure Progress(Sender: TObject; BytesRead, TotalBytes: Int64;
+      var Abort: Boolean);
     procedure Decision(Sender: TObject; const Manifest: TUpdateManifest;
       var Accept: Boolean);
   end;
@@ -633,6 +636,13 @@ begin
     RecheckBusyStateObserved := RecheckUpdater.IsUpdating;
 end;
 
+procedure TIntegrationObserver.Progress(Sender: TObject; BytesRead, TotalBytes: Int64;
+  var Abort: Boolean);
+begin
+  Inc(ProgressCount);
+  Assert.AreEqual<Cardinal>(MainThreadId, GetCurrentThreadId);
+end;
+
 procedure TIntegrationObserver.Decision(Sender: TObject;
   const Manifest: TUpdateManifest; var Accept: Boolean);
 begin
@@ -806,6 +816,8 @@ var
   Server: TIntegrationHttpServer;
   Scope, ErrorMessage, TempFolder: string;
   Engine: TUpdateEngine;
+  Observer: TIntegrationObserver;
+  Worker: TDownloadThread;
   Manifest: TUpdateManifest;
   CheckResult: TUpdateCheckResult;
 begin
@@ -819,13 +831,28 @@ begin
     SetSignedResponse(Server, Key, BuildManifest(Server, '2.0.0.0',
       TTimeZone.Local.ToUniversalTime(Now)));
     Engine := NewEngine(Server, Key.PublicKey, TempFolder);
+    Observer := TIntegrationObserver.Create;
+    Worker := nil;
     try
       CheckResult := CompleteEngineCheck(Engine, Manifest, ErrorMessage);
       Assert.AreEqual<TUpdateCheckResult>(ucrUpdateAvailable, CheckResult, ErrorMessage);
       Assert.AreEqual(0, Server.PackageRequests,
         'Metadata acceptance alone must not fetch the package');
-      Assert.IsTrue(Engine.DownloadUpdate(Manifest),
+      Assert.IsFalse(Engine.SynchronizeEvents);
+      Engine.SynchronizeEvents := True;
+      Observer.MainThreadId := GetCurrentThreadId;
+      Engine.OnStateChange := Observer.StateChanged;
+      Engine.OnDownloadProgress := Observer.Progress;
+      Worker := TDownloadThread.Create(Engine, Manifest);
+      Worker.Start;
+      Assert.AreEqual<DWORD>(WAIT_OBJECT_0, WaitForSingleObject(Worker.Handle, 10000));
+      Assert.AreEqual(0, Observer.StateCount);
+      Assert.AreEqual(0, Observer.ProgressCount);
+      CheckSynchronize(0);
+      Assert.IsTrue(Worker.DownloadResult,
         'Explicit download of the accepted package should succeed');
+      Assert.AreEqual(2, Observer.StateCount);
+      Assert.IsTrue(Observer.ProgressCount > 0);
       Assert.IsTrue(Server.PackageRequests >= 1,
         'Package endpoint must be reached by explicit DownloadUpdate only');
       Assert.AreEqual(1, Server.PackageHeadRequests,
@@ -833,7 +860,9 @@ begin
       Assert.AreEqual(1, Server.PackageGetRequests,
         'Download should retrieve package bytes once');
     finally
+      Worker.Free;
       Engine.Free;
+      Observer.Free;
     end;
   finally
     SetRollbackRegistryTestScope('');

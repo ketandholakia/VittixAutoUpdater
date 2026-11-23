@@ -325,6 +325,9 @@ begin
         FZipProgressEntered.WaitFor(15000),
         'ApplyUpdate must enter active Deflate processing');
       Engine.Cancel;
+      Engine.Reset;
+      Assert.IsTrue(TDirectory.Exists(OperationStagingPath),
+        'Reset must retain staging while extraction is active');
     finally
       FZipProgressContinue.SetEvent;
       Worker.WaitFor;
@@ -333,7 +336,7 @@ begin
     end;
     Assert.IsFalse(ApplyResult,
       'Cancelled extraction must not proceed to installer handoff');
-    Assert.AreEqual<TUpdateState>(usCancelled, Engine.State);
+    Assert.AreEqual<TUpdateState>(usIdle, Engine.State);
     Assert.IsFalse(TDirectory.Exists(OperationStagingPath),
       'ApplyUpdate cancellation must clean only its own staging context');
   finally
