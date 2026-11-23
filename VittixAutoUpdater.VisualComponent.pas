@@ -1320,12 +1320,15 @@ begin
   FInstallThread := TThread.CreateAnonymousThread(
     procedure
     begin
-      var Success := FEngine.ApplyUpdate;
+      var ErrorMessage: string;
+      var Success := FEngine.ApplyUpdate(ErrorMessage);
       var Event := Default(TQueuedUIEvent);
       Event.Kind := queInstallComplete;
       Event.Success := Success;
       if Success then
         Event.Text := 'Update completed successfully'
+      else if ErrorMessage <> '' then
+        Event.Text := ErrorMessage
       else
         Event.Text := 'Update failed';
       QueueUIEvent(Event);

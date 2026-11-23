@@ -100,7 +100,7 @@ type
     function GetTempExtractPath: string;
     procedure CleanupTempFiles;
 
-    function ExtractUpdate(const ZipFile, DestPath: string): Boolean;
+    function ExtractUpdate(const ZipFile, DestPath: string; out ErrorMessage: string): Boolean;
 
 {$IFDEF MSWINDOWS}
     function ApplyUpdateWindows(const SourcePath: string): Boolean;
@@ -117,7 +117,8 @@ type
 
     procedure CheckForUpdate(Callback: TUpdateCheckCallback);
     function DownloadUpdate(const Manifest: TUpdateManifest): Boolean;
-    function ApplyUpdate: Boolean;
+    function ApplyUpdate: Boolean; overload;
+    function ApplyUpdate(out ErrorMessage: string): Boolean; overload;
 
     procedure Cancel;
     function Rollback: Boolean;
@@ -742,6 +743,7 @@ var
   Lines, Backup, Install, Restore: TStringList;
   ExeName, Stage, BackupRoot, Entry, PreservedPath, Destination, Source,
     Saved, Marker, IndexText: string;
+  PreservedDestinations: TArray<string>;
   I: Integer;
   Preserve, IsExe: Boolean;
 
@@ -767,6 +769,16 @@ var
   end;
 
 begin
+  SetLength(PreservedDestinations, Length(PreserveFiles));
+  for I := 0 to High(PreserveFiles) do
+  begin
+    if not IsSafeZipEntryPath(AppDir, PreserveFiles[I], PreservedDestinations[I]) then
+      raise EFileSystemException.CreateFmt('Invalid PreserveFiles entry: %s',
+        [PreserveFiles[I]]);
+    if SameInstallPath(PreservedDestinations[I], AppExe) then
+      raise EFileSystemException.Create('PreserveFiles includes the application executable');
+  end;
+
   ExeName := ExtractFileName(AppExe);
   Stage := IncludeTrailingPathDelimiter(ExtractFileDir(
     ExcludeTrailingPathDelimiter(SourcePath)));
@@ -809,11 +821,9 @@ begin
       IndexText := IntToStr(I);
       IsExe := SameInstallPath(Destination, AppExe);
       Preserve := False;
-      for PreservedPath in PreserveFiles do
-        if SameInstallPath(StringReplace(PreservedPath, '/', '\', [rfReplaceAll]), Entry) then
+      for PreservedPath in PreservedDestinations do
+        if SameInstallPath(PreservedPath, Destination) then
         begin
-          if IsExe then
-            raise EFileSystemException.Create('PreserveFiles includes the application executable');
           Preserve := True;
           Break;
         end;
@@ -1098,6 +1108,8 @@ begin
 end;
 
 function TUpdateEngine.ExtractArchiveForTests(const ZipFile, DestPath: string): Boolean;
+var
+  ErrorMessage: string;
 begin
   FStateLock.Acquire;
   try
@@ -1106,13 +1118,15 @@ begin
     FStateLock.Release;
   end;
   SetState(usExtracting, 'Extracting update');
-  Result := ExtractUpdate(ZipFile, DestPath);
+  Result := ExtractUpdate(ZipFile, DestPath, ErrorMessage);
   if Result then
     SetState(usReady, 'Update extracted');
 end;
 
 function TUpdateEngine.ExtractDownloadedPackageForTests(
   out ExtractedPath: string): Boolean;
+var
+  ErrorMessage: string;
 begin
   ExtractedPath := '';
   Result := False;
@@ -1120,7 +1134,7 @@ begin
     Exit;
   FExtractPath := GetTempExtractPath;
   ExtractedPath := FExtractPath;
-  Result := ExtractUpdate(FDownloadedFile, FExtractPath);
+  Result := ExtractUpdate(FDownloadedFile, FExtractPath, ErrorMessage);
   if not Result then
     CleanupTempFiles;
 end;
@@ -1640,7 +1654,7 @@ function RtlUpcaseUnicodeChar(SourceCharacter: WideChar): WideChar; stdcall;
   external 'ntdll.dll' name 'RtlUpcaseUnicodeChar';
 
 function TUpdateEngine.ExtractUpdate(
-  const ZipFile, DestPath: string): Boolean;
+  const ZipFile, DestPath: string; out ErrorMessage: string): Boolean;
 const
   FileEntry = 'F';
   ExplicitDirectory = 'D';
@@ -1751,6 +1765,7 @@ var
 
 begin
   Result := False;
+  ErrorMessage := '';
   Paths := nil;
   ZipCancellationObserver := nil;
   try
@@ -1980,7 +1995,8 @@ begin
     except
       on E: Exception do
       begin
-        SetState(usFailed, 'Extraction failed: ' + E.Message);
+        ErrorMessage := 'Extraction failed: ' + E.Message;
+        SetState(usFailed, ErrorMessage);
         Result := False;
       end;
     end;
@@ -1999,9 +2015,17 @@ end;
 
 function TUpdateEngine.ApplyUpdate: Boolean;
 var
+  ErrorMessage: string;
+begin
+  Result := ApplyUpdate(ErrorMessage);
+end;
+
+function TUpdateEngine.ApplyUpdate(out ErrorMessage: string): Boolean;
+var
   TerminateAction: TThreadProcedure;
 begin
   Result := False;
+  ErrorMessage := '';
 
   FStateLock.Acquire;
   try
@@ -2020,7 +2044,7 @@ begin
     try
       FExtractPath := GetTempExtractPath;
 
-      if not ExtractUpdate(FDownloadedFile, FExtractPath) then
+      if not ExtractUpdate(FDownloadedFile, FExtractPath, ErrorMessage) then
       begin
         CleanupTempFiles;
         Exit;
@@ -2085,14 +2109,16 @@ begin
       end
       else
       begin
-        SetState(usFailed, 'Failed to apply update');
+        ErrorMessage := 'Failed to apply update';
+        SetState(usFailed, ErrorMessage);
         CleanupTempFiles;
       end;
 
     except
       on E: Exception do
       begin
-        SetState(usFailed, 'Update error: ' + E.Message);
+        ErrorMessage := E.Message;
+        SetState(usFailed, 'Update error: ' + ErrorMessage);
         CleanupTempFiles;
         Result := False;
       end;
@@ -2116,6 +2142,9 @@ var
   BackupAttributes: DWORD;
 begin
   AppExe := ParamStr(0);
+  if Copy(AppExe, 1, 2) = '\\' then
+    raise EFileSystemException.Create(
+      'Updates from UNC or extended Windows paths are not supported. Use a writable local installation.');
   BackupAttributes := GetFileAttributes(PChar(AppExe + '.old'));
   if (BackupAttributes <> INVALID_FILE_ATTRIBUTES) and
      ((BackupAttributes and (FILE_ATTRIBUTE_DIRECTORY or FILE_ATTRIBUTE_REPARSE_POINT)) <> 0) then

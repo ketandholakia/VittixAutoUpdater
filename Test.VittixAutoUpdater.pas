@@ -90,6 +90,7 @@ type
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
     [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
     [Test] procedure ApplyScriptBacksUpRestoresAndPreservesFiles;
+    [Test] procedure ApplyScriptRejectsUnsafePreserveFilesWithoutMatchingPayload;
     [Test] procedure ApplyScriptCompletesTwiceAndRollsBackPartialCopy;
   end;
 
@@ -2144,7 +2145,7 @@ var
   BackupAt, CopyAt, RestoreAt: Integer;
 begin
   Script := BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App',
-    ['App.exe', 'config\data.bin', 'config\settings.ini'], ['config/settings.ini']);
+    ['App.exe', 'config\data.bin', 'config/settings.ini'], ['CONFIG/Settings.INI']);
   BackupAt := Pos('xcopy "C:\App\config\data.bin" "C:\Stage\backup\files\config"', Script);
   CopyAt := Pos('xcopy "C:\Stage\extract\config\data.bin" "C:\App\config" /Y /R', Script);
   RestoreAt := Pos('xcopy "C:\Stage\backup\files\config\data.bin" "C:\App\config"', Script);
@@ -2161,6 +2162,22 @@ begin
         ['App.exe'], ['APP.EXE']);
     end,
     EFileSystemException);
+end;
+
+procedure TVittixAutoUpdaterTests.ApplyScriptRejectsUnsafePreserveFilesWithoutMatchingPayload;
+var
+  InvalidPath: string;
+begin
+  for InvalidPath in TArray<string>.Create('..\settings.ini', 'config/../settings.ini',
+    'C:\App\settings.ini', '\\?\C:\App\settings.ini', '\\server\share\settings.ini',
+    '\settings.ini', 'C:settings.ini', 'config//settings.ini', '', 'APP.EXE') do
+    Assert.WillRaise(
+      procedure
+      begin
+        BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App',
+          ['other.txt'], [InvalidPath]);
+      end,
+      EFileSystemException, InvalidPath);
 end;
 
 procedure TVittixAutoUpdaterTests.RollbackExecutableRestoresCurrentWhenBackupIsLocked;
