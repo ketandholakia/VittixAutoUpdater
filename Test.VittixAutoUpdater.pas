@@ -83,6 +83,7 @@ type
     [Test] procedure SignedManifestFetchRejectsTamperingAndUnknownKeys;
 {$ENDIF}
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
+    [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
   end;
 
 implementation
@@ -1916,6 +1917,21 @@ begin
     if TDirectory.Exists(Root) then
       TDirectory.Delete(Root, True);
   end;
+end;
+
+procedure TVittixAutoUpdaterTests.ApplyScriptDeletesStaleBackupBeforeRename;
+var
+  Script: string;
+  DeleteAt, RenameAt, CheckAt: Integer;
+begin
+  Script := BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App');
+  DeleteAt := Pos('del /f /q "C:\App\App.exe.old" 2>nul', Script);
+  RenameAt := Pos('ren "C:\App\App.exe" "App.exe.old" 2>nul', Script);
+  CheckAt := Pos('if not exist "C:\App\App.exe" goto RENAMED', Script);
+  Assert.IsTrue(Pos(':WAITLOOP', Script) > 0);
+  Assert.IsTrue(DeleteAt > Pos(':WAITLOOP', Script));
+  Assert.IsTrue(RenameAt > DeleteAt);
+  Assert.IsTrue(CheckAt > RenameAt);
 end;
 
 initialization

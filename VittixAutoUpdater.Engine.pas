@@ -35,6 +35,7 @@ function IsManifestRollbackAllowed(const CandidateVersion: TAppVersion;
   CandidateIssuedAt: Int64; const CandidateChecksum, StoredState: string;
   out ErrorMessage: string): Boolean;
 function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): string;
+function BuildApplyScript(const AppExe, SourcePath, AppDir: string): string;
 
 {$IFDEF VITTIX_TEST_REGISTRY}
 procedure SetRollbackRegistryTestScope(const KeyName: string);
@@ -706,6 +707,69 @@ function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): strin
 begin
   Result := Format('xcopy "%s\*.*" "%s" /E /Y /I',
     [BatchPath(SourcePath), BatchPath(DestinationPath)]);
+end;
+
+function BuildApplyScript(const AppExe, SourcePath, AppDir: string): string;
+var
+  Lines: TStringList;
+  ExeName: string;
+begin
+  ExeName := ExtractFileName(AppExe);
+  Lines := TStringList.Create;
+  try
+    Lines.Add('@echo off');
+    Lines.Add('setlocal');
+    Lines.Add('set RETRIES=0');
+    Lines.Add('');
+    Lines.Add(':WAITLOOP');
+    // Retry the rename instead of one fixed sleep - this is how we know
+    // the old process actually released the file handle, rather than
+    // hoping 2 seconds was long enough.
+    Lines.Add(Format('del /f /q "%s.old" 2>nul', [BatchPath(AppExe)]));
+    Lines.Add(
+      Format('ren "%s" "%s.old" 2>nul',
+        [BatchPath(AppExe), BatchPath(ExeName)]));
+    Lines.Add(
+      Format('if not exist "%s" goto RENAMED', [BatchPath(AppExe)]));
+    Lines.Add('set /a RETRIES+=1');
+    Lines.Add('if %RETRIES% GEQ 15 goto RENAME_FAILED');
+    Lines.Add('timeout /t 1 /nobreak > nul');
+    Lines.Add('goto WAITLOOP');
+    Lines.Add('');
+    Lines.Add(':RENAMED');
+    Lines.Add(BuildBatchCopyCommand(SourcePath, AppDir));
+    Lines.Add('if errorlevel 1 goto COPY_FAILED');
+    Lines.Add(Format('if not exist "%s" goto COPY_FAILED', [BatchPath(AppExe)]));
+    Lines.Add('');
+    Lines.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
+    Lines.Add(Format('del "%s"',
+      [BatchPath(IncludeTrailingPathDelimiter(ExtractFileDir(SourcePath)) + 'package.zip')]));
+    Lines.Add(Format('rd /s /q "%s"',
+      [BatchPath(SourcePath)]));
+    Lines.Add('del "%~f0"');
+    Lines.Add('exit /b 0');
+    Lines.Add('');
+    Lines.Add(':COPY_FAILED');
+    // Files were only partially overwritten - restore the previous exe
+    // and relaunch it rather than leaving the app missing or half-updated.
+    // The extracted update in SourcePath is deliberately left on disk for
+    // inspection/retry instead of being deleted.
+    Lines.Add(Format('ren "%s.old" "%s"',
+      [BatchPath(AppExe), BatchPath(ExeName)]));
+    Lines.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
+    Lines.Add('del "%~f0"');
+    Lines.Add('exit /b 1');
+    Lines.Add('');
+    Lines.Add(':RENAME_FAILED');
+    // Couldn't get an exclusive lock on the exe in time. Nothing was
+    // touched - old exe is untouched, update stays in SourcePath.
+    Lines.Add('del "%~f0"');
+    Lines.Add('exit /b 1');
+
+    Result := Lines.Text;
+  finally
+    Lines.Free;
+  end;
 end;
 
 function IsSafeZipEntryPath(const DestinationPath, EntryName: string;
@@ -1769,7 +1833,7 @@ function TUpdateEngine.ApplyUpdateWindows(
 var
   BatchFile: string;
   BatchContent: TStringList;
-  AppExe, NewExe, AppDir, ExeName: string;
+  AppExe, NewExe, AppDir: string;
   TempName: array[0..MAX_PATH] of Char;
   CanWriteAppDir: Boolean;
 begin
@@ -1800,60 +1864,13 @@ begin
   end;
 
   AppDir := ExcludeTrailingPathDelimiter(ExtractFilePath(AppExe));
-  ExeName := ExtractFileName(AppExe);
 
   BatchFile := IncludeTrailingPathDelimiter(ExtractFileDir(SourcePath)) +
     'apply.cmd';
 
   BatchContent := TStringList.Create;
   try
-    BatchContent.Add('@echo off');
-    BatchContent.Add('setlocal');
-    BatchContent.Add('set RETRIES=0');
-    BatchContent.Add('');
-    BatchContent.Add(':WAITLOOP');
-    // Retry the rename instead of one fixed sleep - this is how we know
-    // the old process actually released the file handle, rather than
-    // hoping 2 seconds was long enough.
-    BatchContent.Add(
-      Format('ren "%s" "%s.old" 2>nul',
-        [BatchPath(AppExe), BatchPath(ExeName)]));
-    BatchContent.Add(
-      Format('if exist "%s.old" goto RENAMED', [BatchPath(AppExe)]));
-    BatchContent.Add('set /a RETRIES+=1');
-    BatchContent.Add('if %RETRIES% GEQ 15 goto RENAME_FAILED');
-    BatchContent.Add('timeout /t 1 /nobreak > nul');
-    BatchContent.Add('goto WAITLOOP');
-    BatchContent.Add('');
-    BatchContent.Add(':RENAMED');
-    BatchContent.Add(BuildBatchCopyCommand(SourcePath, AppDir));
-    BatchContent.Add('if errorlevel 1 goto COPY_FAILED');
-    BatchContent.Add(Format('if not exist "%s" goto COPY_FAILED', [BatchPath(AppExe)]));
-    BatchContent.Add('');
-    BatchContent.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
-    BatchContent.Add(Format('del "%s"',
-      [BatchPath(IncludeTrailingPathDelimiter(ExtractFileDir(SourcePath)) + 'package.zip')]));
-    BatchContent.Add(Format('rd /s /q "%s"',
-      [BatchPath(SourcePath)]));
-    BatchContent.Add('del "%~f0"');
-    BatchContent.Add('exit /b 0');
-    BatchContent.Add('');
-    BatchContent.Add(':COPY_FAILED');
-    // Files were only partially overwritten - restore the previous exe
-    // and relaunch it rather than leaving the app missing or half-updated.
-    // The extracted update in SourcePath is deliberately left on disk for
-    // inspection/retry instead of being deleted.
-    BatchContent.Add(Format('ren "%s.old" "%s"',
-      [BatchPath(AppExe), BatchPath(ExeName)]));
-    BatchContent.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
-    BatchContent.Add('del "%~f0"');
-    BatchContent.Add('exit /b 1');
-    BatchContent.Add('');
-    BatchContent.Add(':RENAME_FAILED');
-    // Couldn't get an exclusive lock on the exe in time. Nothing was
-    // touched - old exe is untouched, update stays in SourcePath.
-    BatchContent.Add('del "%~f0"');
-    BatchContent.Add('exit /b 1');
+    BatchContent.Text := BuildApplyScript(AppExe, SourcePath, AppDir);
 
     if not CreateExclusiveStagingFile(BatchFile) then
       raise EFileSystemException.CreateFmt(
