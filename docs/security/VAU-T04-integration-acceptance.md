@@ -78,7 +78,7 @@ The new malformed ZIP tests call the actual engine extraction method through a t
 
 ## Regression verification
 
-RAD Studio 12 Athens compiler 36.0 was used. The explicit DELPHIXE_UP and test defines are required by the current project setup.
+RAD Studio 12 Athens compiler 36.0 was used. This historical run used DELPHIXE_UP and the test defines. Current builds use the modern Delphi code directly.
 
 | Command | Outcome |
 |---|---|
