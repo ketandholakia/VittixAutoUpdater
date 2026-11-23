@@ -15,7 +15,8 @@ import os
 import argparse
 import base64
 import getpass
-from datetime import datetime
+from datetime import datetime, timezone
+import re
 
 def load_signing_key(path):
     try:
@@ -88,6 +89,16 @@ def get_file_size(filepath):
     """Get file size in bytes"""
     return os.path.getsize(filepath)
 
+def validate_version(version, field_name):
+    """Validate the decimal version components accepted by the Delphi updater."""
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,3}", version):
+        raise ValueError(f"{field_name} must have one to four decimal parts")
+    for part in version.split("."):
+        significant = part.lstrip("0") or "0"
+        if len(significant) > 5 or int(significant) > 65535:
+            raise ValueError(f"{field_name} parts must be between 0 and 65535")
+
+
 def generate_manifest(app_name, version, zip_file, base_url, severity='recommended', 
                      release_notes='', min_version=''):
     """
@@ -106,6 +117,10 @@ def generate_manifest(app_name, version, zip_file, base_url, severity='recommend
         Dictionary with manifest data
     """
     
+    validate_version(version, "Version")
+    if min_version:
+        validate_version(min_version, "Minimum version")
+
     if not os.path.exists(zip_file):
         raise FileNotFoundError(f"Update file not found: {zip_file}")
     
@@ -120,7 +135,7 @@ def generate_manifest(app_name, version, zip_file, base_url, severity='recommend
     download_url = f"{base_url.rstrip('/')}/releases/{filename}"
     
     # Create manifest entry
-    issued_at = datetime.utcnow().isoformat() + 'Z'
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     manifest_entry = {
         'version': version,
         'download_url': download_url,
@@ -202,16 +217,19 @@ def main():
     print(f"  File: {args.file}")
     
     # Generate manifest
-    manifest_entry = generate_manifest(
-        args.app,
-        args.version,
-        args.file,
-        args.url,
-        args.severity,
-        args.notes,
-        args.min_version
-    )
-    
+    try:
+        manifest_entry = generate_manifest(
+            args.app,
+            args.version,
+            args.file,
+            args.url,
+            args.severity,
+            args.notes,
+            args.min_version
+        )
+    except ValueError as error:
+        parser.error(str(error))
+
     # Display info
     entry = manifest_entry[args.app]
     print(f"  Size: {entry['file_size']:,} bytes")

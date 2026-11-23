@@ -2,6 +2,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -89,4 +90,29 @@ def test_generator_signs_exact_file_bytes_with_v1_envelope(tmp_path):
     with pytest.raises(Exception):
         private_key.public_key().verify(
             der_signature, manifest_bytes + b" ", ec.ECDSA(hashes.SHA256())
+        )
+
+
+def test_generator_uses_whole_seconds_in_utc(tmp_path):
+    payload = tmp_path / "payload.zip"
+    payload.write_bytes(b"test payload")
+    entry = generator.generate_manifest(
+        "Demo", "1.0.0.65535", payload, "https://updates.example.test",
+        min_version="0.1.2",
+    )["Demo"]
+    assert entry["version"] == "1.0.0.65535"
+    assert entry["min_version"] == "0.1.2"
+    assert entry["issued_at"] == entry["release_date"]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", entry["issued_at"])
+
+
+@pytest.mark.parametrize("version", ["1.2.3.65536", "1.$10", "1.+2", "1.2.", "1.2.3.4.5"])
+def test_generator_rejects_invalid_version_parts(tmp_path, version):
+    payload = tmp_path / "payload.zip"
+    payload.write_bytes(b"test payload")
+    with pytest.raises(ValueError, match="Version"):
+        generator.generate_manifest("Demo", version, payload, "https://updates.example.test")
+    with pytest.raises(ValueError, match="Minimum version"):
+        generator.generate_manifest(
+            "Demo", "1.2.3", payload, "https://updates.example.test", min_version=version
         )

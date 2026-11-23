@@ -34,6 +34,7 @@ APP_NAME=${2:-}
 SEVERITY=${3:-recommended}
 MIN_VERSION=${4:-}
 MANIFEST_SIGNING_KEY=${MANIFEST_SIGNING_KEY:-}
+BUILD_NUMBER=${BUILD_NUMBER-0}
 
 # Validate arguments
 if [ -z "$VERSION" ] || [ -z "$APP_NAME" ]; then
@@ -42,8 +43,36 @@ if [ -z "$VERSION" ] || [ -z "$APP_NAME" ]; then
     exit 1
 fi
 
-# Full version with build number
-FULL_VERSION="${VERSION}.$(date +%Y%m%d)"
+is_version_part() {
+    local part=$1
+    [[ $part =~ ^[0-9]+$ ]] || return 1
+    part="${part#"${part%%[!0]*}"}"
+    part=${part:-0}
+    [[ ${#part} -le 5 ]] && (( 10#$part <= 65535 ))
+}
+
+is_version() {
+    local value=$1 part
+    local -a parts
+    [[ $value =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || return 1
+    IFS=. read -r -a parts <<< "$value"
+    for part in "${parts[@]}"; do
+        is_version_part "$part" || return 1
+    done
+}
+
+if ! [[ $VERSION =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] ||
+    ! is_version "$VERSION" || ! is_version_part "$BUILD_NUMBER"; then
+    echo "Invalid version or BUILD_NUMBER. Use decimal parts from 0 to 65535." >&2
+    exit 1
+fi
+if [[ -n $MIN_VERSION ]] && ! is_version "$MIN_VERSION"; then
+    echo "Invalid minimum version. Use decimal parts from 0 to 65535." >&2
+    exit 1
+fi
+
+IFS=. read -r MAJOR MINOR PATCH <<< "$VERSION"
+FULL_VERSION="$MAJOR.${MINOR:-0}.${PATCH:-0}.$BUILD_NUMBER"
 ZIP_FILE="${APP_NAME}_v${VERSION}.zip"
 MANIFEST_FILE="manifest.json"
 
