@@ -47,7 +47,7 @@ The total and per-entry output caps are authoritative even if archive size heade
 
 Seven fields were added to `TUpdaterConfig` for ZIP limits. Existing source code remains compatible when it initializes configuration with `TUpdaterConfig.Default`; code that manually fills every record field should add the new fields or begin from `Default`. This changes the record's binary layout, so applications must rebuild against the updated runtime package.
 
-The visual component's `ConfigData` format is now version 2. It writes the new limits and still reads version 1 component streams, applying secure defaults to the new fields. The public visual component API and installer workflow are otherwise unchanged.
+ZIP limits were introduced in version 2 of `ConfigData`. Current version 4 streams also store `PreserveFiles`, and versions 1–3 remain readable. Version 1 receives secure ZIP defaults.
 
 ## Tests and verification
 
@@ -100,3 +100,11 @@ The bounded preflight now runs before the Delphi RTL ZIP parser. It limits the c
 A focused test reproduced the RTL accepting a deflate entry after the declared compressed size was shortened by one byte. The local-region coverage check now rejects that fixture. A disposable junction test also confirmed that extraction rejects a reparse-point ancestor before creating a payload directory through it.
 
 See docs/security/VAU-T04-integration-acceptance.md for the actual Win32/Win64 build and test results. The final VAU-T04-INT verdict is PARTIAL: the Win32 VCL repeated-check test fails both in the full suite and in isolation, and cancellation, concurrent extraction, and reparse-point replacement races remain unverified.
+
+
+## Path conflict lookup
+
+Preflight indexes explicit file and directory entries plus implicit parents in
+a case-insensitive dictionary. It rejects duplicate destinations and file and
+directory conflicts in either entry order, including Windows ordinal Unicode
+case matches. ZIP limits and reparse-point checks still apply before writes.

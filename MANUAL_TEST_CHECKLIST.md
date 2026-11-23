@@ -1,4 +1,4 @@
-# VittixAutoUpdater manual shutdown checklist
+# VittixAutoUpdater manual update checklist
 
 These are owner-run GUI checks; they were **not run as part of this code change**.
 Use a disposable demo install, a test HTTPS update endpoint, and a backup of the
@@ -29,6 +29,43 @@ application directory. The local HTTP exception exists only in the DUnitX build.
    - Repeat from a non-writable directory. Expected: install is refused with
      “Install location not writable; a signed elevated helper is required”; no
      UAC prompt or elevated batch process is launched.
+
+## Consecutive updates
+
+1. Install signed version A into a writable disposable directory. Include a
+   non-ASCII character in the path and add a local `config/settings.ini` value.
+   Configure `PreserveFiles` to include the settings file.
+2. Publish a signed manifest and ZIP for B. Include the executable, a changed
+   secondary file, and a different settings file. Update in place.
+3. Verify B starts, the secondary file changed, the local settings survived,
+   and `App.exe.old` contains A.
+4. Publish a signed manifest and ZIP for C. Update from the same install
+   directory without deleting `App.exe.old`.
+5. Verify C starts, the new secondary file matches its payload hash, the local
+   settings survived, and `App.exe.old` now contains B.
+
+## Forced copy failure
+
+1. Start from a fresh B test installation. Record hashes of its executable
+   and installed files. Prepare a signed C package that replaces at least two
+   files and adds one new file.
+2. Lock a later file in the helper's copy order from a separate PowerShell
+   process. Allow other processes to read it so backup can complete, but
+   deny writes while the copy runs.
+
+   ```powershell
+   $locked = [IO.File]::Open('C:\test\App\locked.dll', 'Open', 'Read', 'Read')
+   try { Read-Host 'Press Enter after the helper attempts the update' }
+   finally { $locked.Dispose() }
+   ```
+
+3. Install C. Hold the lock until the helper has attempted the copy. Verify
+   an earlier file was eligible for copying and the old application restarts.
+4. Compare all installed file hashes against the B snapshot. Confirm the new
+   file from C is absent, preserved settings match B, and the failed
+   operation's staging backup is available. If B does not restart or any
+   installed hash differs, record the helper exit and retained staging path.
+
 
 ## Clean-VM release checklist
 

@@ -1,6 +1,15 @@
 # 05 — Windows installation reliability
 
-## Current method
+## Follow-up
+
+The current UTF-8 helper removes stale executable backups before the rename
+retry, backs up each overwritten file under private staging, and restores the
+previous files on a copy error. `PreserveFiles` keeps selected existing files in
+place. Apply completion still needs verification after restart. See the
+[manual update and copy failure checks](../../MANUAL_TEST_CHECKLIST.md).
+
+
+## Original audit baseline
 
 `TUpdateEngine.ApplyUpdateWindows` (`VittixAutoUpdater.Engine.pas:812-921`) requires the new archive to contain a same-named EXE, optionally verifies signatures, derives the install directory from `ParamStr(0)`, writes a batch file in the temp directory, probes app-dir writability, then launches the batch hidden and non-elevated. The batch retries renaming the running EXE up to 15 seconds, copies the extracted tree, launches the new EXE, and deletes itself. It renames only the EXE to `.old`; on a copy error it restores that EXE and launches it.
 

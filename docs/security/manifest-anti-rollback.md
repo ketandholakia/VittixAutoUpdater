@@ -2,11 +2,17 @@
 
 ## Enforced policy
 
-In signed mode, `issued_at` is required and parsed as an ISO-8601 timestamp. Invalid or future-dated timestamps are rejected. `MaxManifestAgeDays` defaults to 30 and rejects metadata older than that window. Version comparison is numeric with one to four components. Signed metadata below the installed version is rejected, even if `AllowDowngrade=True`; that override applies only when the explicit insecure unsigned mode has been selected.
+In signed mode, `issued_at` is required and parsed as an ISO-8601 timestamp. Invalid or future-dated timestamps are rejected. `MaxManifestAgeDays` defaults to 30 and rejects metadata older than that window. Version comparison is numeric with one to four components. After the persisted floor check passes, signed metadata below the installed version reports `ucrNoUpdateAvailable`. `AllowDowngrade` applies only in explicitly enabled unsigned mode. The installed version comes from the executable version resource or a host-supplied `CurrentVersion`.
 
 After successful signature, schema, and freshness validation, the engine stores a rollback floor in `HKCU\Software\VittixAutoUpdater\TrustState\<hash>\Floor`. The subkey hash is derived from the normalized full executable path, not ordinary updater configuration. The single stored value contains the highest accepted version, signed issuance time, and checksum. Lower versions and older timestamps are rejected; an equal version/time with a different checksum is rejected. Registry read/write or malformed-state errors fail closed. Failed signature, parse, freshness, network, or cancellation paths do not write trust state. The floor is persisted before the UI receives an available/no-update result and before package download.
 
 Moving/renaming the installed executable creates a different path-derived scope. A deliberate reinstall or path migration must therefore be handled as a trusted application deployment and may establish a new floor. Ordinary changes to `TUpdaterConfig` do not reset the registry value.
+
+New floors store rounded whole seconds using an `r:` marker on the timestamp.
+Existing floors retain the original truncation comparison until rewritten. A
+legacy equal-time, equal-version record still rejects a changed checksum.
+Older updater builds cannot read the marked floor and fail closed.
+
 
 ## Limits and threat model
 

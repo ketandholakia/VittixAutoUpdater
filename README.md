@@ -1,6 +1,6 @@
 # VittixAutoUpdater
 
-A Windows application auto-updater component written in Delphi/Pascal.
+A Windows VCL application updater for Delphi 10.3 Rio or later. See the [package installation guide](PACKAGE_INSTALLATION.md) for build and IDE setup.
 
 ## Features
 
@@ -178,8 +178,8 @@ MyApp_v2.1.5.zip
 **Important:** The updater will:
 1. Extract all files from the ZIP
 2. Back up the executable as `MyApp.exe.old` and save files to be overwritten under `backup\` in private staging.
-3. Replace all files
-4. Restart the application
+3. Install payload files while keeping existing files listed in `PreserveFiles`.
+4. Restart the application after a successful copy.
 
 ---
 
@@ -199,7 +199,6 @@ type
     MaxRetries: Integer;           // Retry attempts
     RequireChecksum: Boolean;       // Default True
     RequireHttps: Boolean;          // Default True
-    RequireSecureConfig: Boolean;   // Default True
     MaxManifestAgeDays: Integer;    // Default 30
     VerifyManifestSignature: Boolean;
     ManifestPublicKey: string;      // ECDSA P-256 X||Y as 128 hex characters
@@ -207,6 +206,7 @@ type
     AllowInsecureUnsignedManifests: Boolean; // migration-only; default False
     VerifyAuthenticode: Boolean;    // Default False
     PinnedPublisherThumbprints: TArray<string>; // SHA-256 certificate hashes
+    PreserveFiles: TArray<string>; // Existing app-relative files to keep
   end;
 ```
 
@@ -232,7 +232,7 @@ python generate_manifest.py --signing-key update-signing-private.pem --print-pub
 
 Copy the printed 128-character X||Y value to `Config.ManifestPublicKey` (or to
 `Config.ManifestTrustedPublicKeys` during a rotation). `TUpdaterConfig.Default`
-already enables signature verification and secure configuration. To generate a signed release, pass
+already enables signature verification. To generate a signed release, pass
 `--signing-key update-signing-private.pem` to `generate_manifest.py`. The
 deployment script requires `MANIFEST_SIGNING_KEY` to point at the private key
 and uploads both `manifest.json` and `manifest.json.sig`. Private-key patterns
@@ -240,17 +240,21 @@ are ignored by Git; do not weaken that protection or commit a key.
 
 When `RequireHttps` is enabled (the default), HTTP URLs are rejected and only
 validated HTTPS redirects are followed, with a bounded hop count. HTTPS to
-plaintext HTTP downgrade redirects are rejected.
+plaintext HTTP downgrade redirects are rejected. Only the final response body is
+used. Manifest URLs may include a query string. The signature request appends
+`.sig` to the URL path and retains the query. A UTF-8 BOM is accepted and
+included in the bytes verified by the signature before being removed for JSON
+parsing. Use ISO-8601 timestamps for `issued_at` and `release_date`.
 
-Current defaults: checksum and HTTPS required; signed metadata and secure
-configuration required; no public key is provisioned until the application
-developer configures one; Authenticode verification disabled; no publisher
-pins; `MaxManifestAgeDays = 30`; downgrades disabled; three download attempts.
+Defaults require signed metadata, SHA-256 checksums and HTTPS. Configure a
+trusted public key before rollout. Authenticode verification is off by default.
+`MaxManifestAgeDays` defaults to 30, with three download attempts and signed
+downgrades disabled.
 An update check fails closed until a valid trusted public key is configured.
 
 Subscribe to `Engine.OnSecurityWarning` (or `Component.Engine.OnSecurityWarning`)
-to receive a callback for insecure unsigned mode, missing public keys, or a
-non-empty legacy `ManifestHmacKey`. Warnings are also written to the Windows
+to receive a callback for insecure unsigned mode and missing public keys.
+Warnings are also written to the Windows
 debugger. The explicit `AllowInsecureUnsignedManifests` option is for temporary
 migration only and must not be enabled in production.
 
@@ -268,9 +272,18 @@ option to allow HTTP loopback requests.
 extracted `.exe` and `.dll` must pass Windows `WinVerifyTrust` before the helper
 is launched. If `PinnedPublisherThumbprints` is non-empty, the SHA-256 hash of
 each embedded signing certificate must also match one of those pins.
-`ManifestHmacKey` remains in the config record for source compatibility but is
-deprecated and ignored; configure the ECDSA public key and enable
-`VerifyManifestSignature` instead.
+
+### Version resources and release tools
+
+The engine reads the running executable's version resource. Set `Engine.CurrentVersion`
+explicitly if the host has no readable version resource. A signed manifest that
+passes the persisted rollback policy and lists an older version reports
+`ucrNoUpdateAvailable`.
+
+Use decimal version parts in the range 0–65535. `deploy-update.sh` takes the final
+part from `BUILD_NUMBER` and defaults it to 0. Both release tools write timestamps
+in whole UTC seconds. The ManifestGenerator GUI saves a draft, checks the ZIP
+size and checksum, and copies an offline command to sign the saved bytes.
 
 ### Example Configurations
 
@@ -463,6 +476,16 @@ signtool sign /f certificate.pfx /p password /t http://timestamp.server.com MyAp
 ## Error Handling
 
 ### Network Errors
+
+Manifest failures report the network manager's `LastError` in the
+`ucrError` callback and the `usFailed` state message. Subscribe to
+`Engine.OnLog` for network messages on the operation thread. HTTP errors
+such as 404 are logged and retried with backoff. Deterministic signature,
+metadata and HTTPS policy failures advance to the next mirror without
+retrying the same URL. Cancelling interrupts the backoff within 100 ms.
+
+For direct network-manager use, set `Proxy` to `host:port`, or use
+`host` for the default port 8080. Bracket IPv6 addresses.
 ```pascal
 Engine.CheckForUpdate(procedure(Result: TUpdateCheckResult;
   const Manifest: TUpdateManifest; const ErrorMessage: string)
@@ -480,24 +503,34 @@ end);
 
 ### Engine events and cancellation
 
-SynchronizeEvents defaults to False. Set it to True on a standalone engine to deliver OnStateChange and OnDownloadProgress on the main thread. Worker notifications are queued, so call Cancel to stop work promptly. A cancellation requested by a queued progress handler takes effect when that handler runs. TVittixAutoUpdaterUI already marshals its events.
+`SynchronizeEvents` defaults to `False`. Set it to `True` on a standalone
+engine to deliver `OnStateChange` and `OnDownloadProgress` on the main thread.
+Worker notifications are queued. A cancellation requested by a queued
+progress handler takes effect when that handler runs. Call `Engine.Cancel`
+directly for prompt cancellation. The visual component marshals its own events.
 
-Reset cancels active download or extraction and defers staging cleanup and the idle state until the worker finishes.
+`Reset` cancels active download or extraction and defers staging cleanup and
+the idle state until the worker finishes.
 
+### Apply and rollback
 
-### Rollback on Failure
+Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as
+`config/settings.ini` to keep existing files. Missing files are installed from
+the payload. The list defaults to empty. The executable is always updated.
 
-Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as `config/settings.ini` to keep existing files. Missing files are installed from the payload. The list defaults to empty. On copy failure, the helper removes newly copied files, restores previous files and the executable, and restarts the old application after restoration succeeds.
-```pascal
-if not Engine.ApplyUpdate then
-begin
-  if MessageDlg('Update failed. Restore previous version?', 
-    mtError, [mbYes, mbNo], 0) = mrYes then
-  begin
-    Engine.Rollback;
-  end;
-end;
-```
+The UTF-8 apply helper removes a stale `.old` before trying to rename the running
+executable. It waits for the original path to become free. Before copying payload
+files, it saves overwritten files by relative path under `backup\` in private
+staging. On copy failure it removes new files, restores backups and restarts
+the old application after restoration succeeds. If restoration fails, the helper
+keeps the staging files for recovery. The apply result indicates helper launch.
+Verify installation after the application restarts.
+
+`Engine.Rollback` is an explicit executable swap. It moves the current executable
+aside and promotes `.old`. If promotion fails, it tries to restore the current
+executable name. It returns `False` when the executable is locked or the swap
+fails. The apply helper handles multi-file recovery automatically during a
+failed copy.
 
 ---
 

@@ -1,6 +1,6 @@
 # VittixAutoUpdater Visual Component Guide
 
-This guide provides comprehensive documentation for using the enhanced visual components of VittixAutoUpdater in your Delphi applications.
+Use VittixAutoUpdater with Delphi 10.3 Rio or later on Windows. See [package installation](PACKAGE_INSTALLATION.md) for IDE setup.
 
 ## Table of Contents
 
@@ -246,6 +246,17 @@ type
     property OnSettingsClick: TNotifyEvent;
   end;
 ```
+
+### Thread affinity and diagnostics
+
+The visual component delivers its events on the main thread. Leave its internal
+engine's `SynchronizeEvents` setting at `False`. Standalone engines can enable
+that property to queue state and progress notifications to the main thread.
+
+Set `Updater.Engine.OnLog` to observe network logs on the operation thread.
+A failed manifest check includes the network manager's `LastError` in the
+failure message. Configure a version resource or set
+`Updater.Engine.CurrentVersion` explicitly.
 
 ### Event Implementation Examples
 
@@ -645,6 +656,16 @@ end;
 The VittixAutoUpdater visual components provide a complete, professional solution for application updating in Delphi. With multiple UI styles, comprehensive event handling, and extensive customization options, they can be adapted to fit any application's needs.
 
 For additional support and examples, refer to the demo application and the main VittixAutoUpdater documentation.
+
 ### Preserving local files during installation
 
-Set PreserveFiles in the visual component configuration record to application-relative file paths such as config/settings.ini. Existing files on the list are kept. Missing files are installed from the payload. The setting is saved in ConfigData version 4. ConfigData versions 1 and 2 load with an empty list. Version 3 also loads.
+Set `Config.PreserveFiles` to application-relative paths such as
+`config/settings.ini`. The updater keeps existing files on the list and installs
+payload files where those paths are missing. It backs up other replaced files
+in private staging and restores them if copying fails. `ResetToInitialState`
+requests cancellation and the engine cleans staging once its worker exits.
+
+`ConfigData` version 4 stores this list and loads versions 1 through 3.
+Versions 1 and 2 use an empty preserve list. Legacy HMAC settings in old DFMs
+are discarded. The visual progress event type is `TVittixDownloadProgressEvent`.
+Manifest severity values are `sevOptional`, `sevRecommended` and `sevCritical`.

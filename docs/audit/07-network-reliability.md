@@ -2,6 +2,15 @@
 
 Transport is Delphi `System.Net.HttpClient`/`System.Net.URLClient`, not Indy/WinHTTP/WinINet/BITS (`VittixAutoUpdater.Network.pas` implementation uses). Indy appears only in the loopback test server.
 
+## Follow-up
+
+The current network manager logs unsuccessful HTTP status codes, backs off
+between attempts and reports the last manifest error. Signature, metadata and
+HTTPS policy failures skip retries for the same mirror. Both retry waits check
+cancellation every 100 ms. Secure redirect hops discard their response bodies
+before following the next URL. Proxy endpoints can specify a port.
+
+
 ## Implemented controls
 
 * Connection timeout configured; response timeout is ten times that value (`Network.pas:719-731`).
@@ -12,7 +21,7 @@ Transport is Delphi `System.Net.HttpClient`/`System.Net.URLClient`, not Indy/Win
 * Disk free-space check against expected download size (`995-1005`).
 * SHA-256 verification and expected-size checks are used before successful completion; inspect remaining `DownloadFile` body at `Network.pas:1020+` for all failure branches.
 
-## Gaps and risks
+## Gaps recorded by the original audit
 
 Manifest GET buffers full response in `TMemoryStream` before parsing; no clear maximum manifest byte limit. Package temp path and `.part-N` names are predictable, and initial path is deleted if already present (`1015+`); collision/TOCTOU and parallel operation risk. Expected size is optional at manifest level and may be missing/invalid; then size cap and disk check do not protect. Cancellation is callback-driven and may wait for response timeout. Proxy configuration appears host + fixed port only, with no proxy credentials. No bandwidth limit or configurable retry policy per HTTP status. Resume correctness relies on server HEAD/range metadata and merits mock-server execution. A truncated response should fail size/checksum if metadata is supplied, but runtime cases are not executed.
 

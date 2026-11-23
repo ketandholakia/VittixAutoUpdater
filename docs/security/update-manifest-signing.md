@@ -12,6 +12,13 @@
 
 The verifier checks a 1 MiB manifest body limit, verifies the detached signature and trusted key, then decodes UTF-8 and parses required fields. Signed mode requires `issued_at`, rejects invalid/future timestamps, and applies `MaxManifestAgeDays`. Package download is a separate later engine operation; a failed check never returns `ucrUpdateAvailable`.
 
+A UTF-8 BOM is part of the signed bytes when present. The client verifies the
+signature before removing the BOM for JSON parsing. For a manifest at
+`https://updates.example.test/manifest.json?channel=stable`, serve the signature
+at `https://updates.example.test/manifest.json.sig?channel=stable`. Redirects
+retain only the final response body for verification and parsing.
+
+
 ## Developer workflow
 
 1. Install the Python `cryptography` package on an offline signing workstation.
@@ -36,8 +43,24 @@ The verifier checks a 1 MiB manifest body limit, verifies the detached signature
 
 7. Validate the generated `.sig` format and test a release using the disposable vectors in `tests/vectors/manifest-signature-vector.json`. Do not use a production private key in tests.
 
+## Signing a manifest saved by the GUI
+
+The GUI writes a whole-second UTC `issued_at` timestamp and provides a
+**Copy signing command** button after save. Run the command against the saved
+manifest from a trusted signing environment.
+
+```powershell
+python generate_manifest.py --signing-key 'C:\path\to\private-key.pem' --sign-existing 'C:\path\to\manifest.json'
+```
+
+The CLI creates `manifest.json.sig` alongside the manifest and preserves the
+original file bytes. Re-sign after changing the JSON. The GUI warns about missing
+`issued_at` or a missing detached signature on a saved file. The updater
+performs cryptographic verification at fetch time.
+
+
 ## Migration and compatibility
 
-Existing detached signatures containing only Base64 raw signature bytes are rejected. Regenerate the `.sig` file using the versioned envelope. Existing applications must set a trusted key; checks fail closed without one. `ManifestPublicKey` remains supported. For rotation, provision both old and new public keys in `ManifestTrustedPublicKeys` before the first release signed by the new key. `AllowInsecureUnsignedManifests` is an explicit migration-only escape hatch; it must remain `False` in production. `ManifestHmacKey` remains ignored.
+Existing detached signatures containing only Base64 raw signature bytes are rejected. Regenerate the `.sig` file using the versioned envelope. Existing applications must set a trusted key; checks fail closed without one. `ManifestPublicKey` remains supported. For rotation, provision both old and new public keys in `ManifestTrustedPublicKeys` before the first release signed by the new key. `AllowInsecureUnsignedManifests` is an explicit migration-only escape hatch; it must remain `False` in production.
 
 Adding fields to public `TUpdaterConfig` changes its record size. Rebuild applications and packages from source; this is not binary-compatible with an already compiled runtime package/application.
