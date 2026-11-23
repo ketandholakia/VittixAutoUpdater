@@ -1,6 +1,6 @@
 # VittixAutoUpdater Visual Component Guide
 
-Use VittixAutoUpdater with Delphi 10.3 Rio or later on Windows. See [package installation](PACKAGE_INSTALLATION.md) for IDE setup.
+Delphi 12 Athens is the oldest verified compiler for VittixAutoUpdater on Windows. See [package installation](PACKAGE_INSTALLATION.md) for IDE setup.
 
 ## Table of Contents
 

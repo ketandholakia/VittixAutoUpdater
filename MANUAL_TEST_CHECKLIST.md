@@ -1,8 +1,8 @@
 # VittixAutoUpdater manual update checklist
 
-These are owner-run GUI checks; they were **not run as part of this code change**.
 Use a disposable demo install, a test HTTPS update endpoint, and a backup of the
-application directory. The local HTTP exception exists only in the DUnitX build.
+application directory. Loopback HTTP requires a test build with the loopback
+exception explicitly enabled.
 
 ## Shutdown behavior
 
@@ -69,7 +69,8 @@ application directory. The local HTTP exception exists only in the DUnitX build.
 
 ## Clean-VM release checklist
 
-- Install the signed release on a clean, non-admin Windows VM.
+- Install the signed release on a clean Windows VM and run it from a standard
+  user account.
 - Verify normal update, rollback policy, signature rejection, stale-manifest
   rejection, and HTTPS redirect/downgrade behavior against the release endpoint.
 - Verify download size/checksum handling and retry behavior with the staging
@@ -77,7 +78,22 @@ application directory. The local HTTP exception exists only in the DUnitX build.
 - Exercise the three shutdown cases above and check the updated executable,
   helper exit, and temporary-folder cleanup.
 - Verify Authenticode pins against the expected SHA-256 certificate thumbprint.
-- Confirm a Program Files install fails closed until the signed elevated helper
-  is available; verify no private signing key is present on the VM.
+- Try the update from `C:\Program Files` as a standard user. Verify the
+  updater reports "Install location not writable" and stays responsive.
+- Run the app directly from an SMB UNC path and verify Install reports that
+  UNC paths are unsupported. Repeat using a real SMB mapped drive such as
+  `Z:` and record the result separately. If installation succeeds, check the
+  installed and backup hashes and verify relaunch.
+- Download the release application over HTTPS and use the release publisher
+  certificate on the application and all payload EXEs and DLLs. Set
+  `VerifyAuthenticode=True` and configure the publisher certificate's SHA-256
+  thumbprint in `PinnedPublisherThumbprints`. Run with SmartScreen and the
+  customer's antivirus policy enabled and record any prompt or block when
+  the hidden `apply.cmd` runs or the replacement launches.
+- Repeat the consecutive-update sequence above with the final release builds
+  and signed manifests on the HTTPS test endpoint.
+- Confirm the offline signing key and its passphrase have recoverable backups
+  per the [key-management guide](docs/security/signing-key-management.md).
+  Verify no private signing key is present on the test VM.
 - Record the executable hash, manifest signature, Windows version, and GUI
   acceptance results before release.

@@ -8,6 +8,12 @@ The application's embedded/provisioned ECDSA P-256 public key set is the trust a
 
 Generate a P-256 key on an offline signing workstation. Store it encrypted at rest with limited custodians and an offline backup. Provision the public `X||Y` key to clients through the application's authenticated release/build channel; never fetch it from the update host. Record its computed key ID alongside its owner, activation date, and status. The key ID is SHA-256 of raw X||Y bytes; the generator prints it as part of signature output.
 
+Keep a recoverable backup of the passphrase under separate access controls
+from the encrypted private key. Before release, verify that an authorized
+custodian can restore the key offline and derive the expected public key ID.
+If the key is lost, clients must receive a replacement trust key before they
+can accept updates signed by its replacement.
+
 ## Rotation
 
 1. Generate a new key offline and record its key ID.

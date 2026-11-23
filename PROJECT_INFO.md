@@ -37,7 +37,7 @@ VittixAutoUpdater/
 
 ## Compatibility
 
-- ✅ Delphi 10.x and newer
+- ✅ Delphi 12 Athens is the oldest verified compiler
 - ✅ Free Pascal (FPC) with -Mdelphi mode
 - ✅ Windows only
 

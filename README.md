@@ -1,6 +1,6 @@
 # VittixAutoUpdater
 
-A Windows VCL application updater for Delphi 10.3 Rio or later. See the [package installation guide](PACKAGE_INSTALLATION.md) for build and IDE setup.
+A Windows VCL application updater for Delphi. Delphi 12 Athens is the oldest verified compiler. See the [package installation guide](PACKAGE_INSTALLATION.md) for build and IDE setup.
 
 ## Features
 
@@ -436,8 +436,18 @@ and `RestartAfterInstall` is enabled (the default), it calls
 `Application.Terminate` on the main thread, falling back to `ExitProcess(0)`
 when no VCL `Application` object is available. Updates under a non-writable
 application directory fail with a clear message; a batch file from a
-user-writable temporary directory is never elevated. A separate signed helper
-is a TODO.
+user-writable temporary directory is never elevated. For unattended per-user
+updates, install under `%LOCALAPPDATA%\Programs\<AppName>` or another local
+directory where the user can modify the application files. Standard users
+typically cannot update an installation under `C:\Program Files` in place.
+The [signed elevated installer](docs/audit/11-development-roadmap.md) is
+tracked as VAU-T02 for a future release.
+
+Direct UNC installs such as `\\server\share\App` are unsupported. SMB shares
+accessed through a mapped drive letter have not been verified for release.
+
+If update checks stop after reinstalling an older build at the same path, see
+[trust-floor rollback troubleshooting](docs/security/manifest-anti-rollback.md).
 
 ## Security Best Practices
 
@@ -515,9 +525,10 @@ the idle state until the worker finishes.
 ### Apply and rollback
 
 Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as
-`config/settings.ini` to keep existing files. Missing files are installed from
-the payload. The list defaults to empty. Listing the application executable
-causes a configuration error because every update requires a replacement executable.
+`config/settings.ini` to keep existing files. Matching is case-insensitive and
+accepts either slash style. Every entry follows the ZIP path validation rules.
+Invalid paths and entries pointing to the application executable cause an
+installation error. Missing files are installed from the payload.
 
 The UTF-8 apply helper removes a stale `.old` before trying to rename the running
 executable. It waits for the original path to become free. Before copying payload

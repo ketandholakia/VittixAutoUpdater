@@ -27,7 +27,7 @@ if defined DELPHIVER (
         if defined BDS goto build
     )
 )
-echo Delphi 10.3 or later was not found. Run this script from a RAD Studio Command Prompt or set BDS to the RAD Studio directory.
+echo A Delphi command-line compiler was not found. Run this script from a RAD Studio Command Prompt or set BDS to the RAD Studio directory.
 exit /b 1
 
 :build

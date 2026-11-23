@@ -11,7 +11,16 @@ Moving/renaming the installed executable creates a different path-derived scope.
 New floors store rounded whole seconds using an `r:` marker on the timestamp.
 Existing floors retain the original truncation comparison until rewritten. A
 legacy equal-time, equal-version record still rejects a changed checksum.
-Older updater builds cannot read the marked floor and fail closed.
+Older updater builds cannot read the marked floor and fail closed. If you
+roll a customer back to an older executable at the same install path after a
+newer build has persisted a marked floor, the older build will refuse update
+checks for that Windows user. Prefer restoring an updater build that can read
+the marked floor. If support must recover the older build, back up the
+affected user's registry subkey and remove only the `Floor` value under
+`HKCU\Software\VittixAutoUpdater\TrustState\<hash>` for that executable.
+Clearing the value also clears the recorded replay protection for that
+installation and user. Resume checks against the trusted release endpoint
+with a current signed manifest to establish a new floor.
 
 
 ## Limits and threat model

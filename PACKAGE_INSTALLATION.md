@@ -1,6 +1,6 @@
 # VittixAutoUpdater package installation
 
-Use Delphi 10.3 Rio or later on Windows. The component uses inline variables.
+Use Delphi 12 Athens or later on Windows. Delphi 12 Athens is the oldest version verified to build the runtime and design-time packages.
 
 - `VittixAutoUpdaterRuntime` contains the updater and VCL component. Build it for each platform your application targets.
 - `VittixAutoUpdaterDesign` contains component registration and property editors. It requires the runtime package for the same IDE architecture.
