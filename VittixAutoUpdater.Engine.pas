@@ -35,7 +35,8 @@ function IsManifestRollbackAllowed(const CandidateVersion: TAppVersion;
   CandidateIssuedAt: Int64; const CandidateChecksum, StoredState: string;
   out ErrorMessage: string): Boolean;
 function BuildBatchCopyCommand(const SourcePath, DestinationPath: string): string;
-function BuildApplyScript(const AppExe, SourcePath, AppDir: string): string;
+function BuildApplyScript(const AppExe, SourcePath, AppDir: string;
+  const PayloadFiles, PreserveFiles: TArray<string>): string;
 
 {$IFDEF VITTIX_TEST_REGISTRY}
 procedure SetRollbackRegistryTestScope(const KeyName: string);
@@ -709,65 +710,143 @@ begin
     [BatchPath(SourcePath), BatchPath(DestinationPath)]);
 end;
 
-function BuildApplyScript(const AppExe, SourcePath, AppDir: string): string;
+function BuildApplyScript(const AppExe, SourcePath, AppDir: string;
+  const PayloadFiles, PreserveFiles: TArray<string>): string;
 var
-  Lines: TStringList;
-  ExeName: string;
+  Lines, Backup, Install, Restore: TStringList;
+  ExeName, Stage, BackupRoot, Entry, PreservedPath, Destination, Source,
+    Saved, Marker, IndexText: string;
+  I: Integer;
+  Preserve, IsExe: Boolean;
+
+  procedure CopyToDir(Commands: TStringList; const InputFile, OutputDir,
+    OnFailure: string);
+  begin
+    Commands.Add(Format('xcopy "%s" "%s" /Y /R /H /K',
+      [BatchPath(InputFile), BatchPath(OutputDir)]));
+    Commands.Add('if errorlevel 1 ' + OnFailure);
+  end;
+
+  procedure EnsureDirectory(Commands: TStringList; const Path, OnFailure: string);
+  begin
+    Commands.Add(Format('if not exist "%0:s\" mkdir "%0:s"', [BatchPath(Path)]));
+    Commands.Add(Format('if not exist "%s\" %s', [BatchPath(Path), OnFailure]));
+  end;
+
 begin
   ExeName := ExtractFileName(AppExe);
+  Stage := IncludeTrailingPathDelimiter(ExtractFileDir(
+    ExcludeTrailingPathDelimiter(SourcePath)));
+  BackupRoot := Stage + 'backup';
   Lines := TStringList.Create;
+  Backup := TStringList.Create;
+  Install := TStringList.Create;
+  Restore := TStringList.Create;
   try
+    Lines.Add('chcp 65001 >nul');
     Lines.Add('@echo off');
-    Lines.Add('setlocal');
+    Lines.Add('setlocal DisableDelayedExpansion');
+    Lines.Add('set VAU_RESTORE_FAILED=');
+    Lines.Add('set VAU_LAST=-1');
     Lines.Add('set RETRIES=0');
-    Lines.Add('');
     Lines.Add(':WAITLOOP');
-    // Retry the rename instead of one fixed sleep - this is how we know
-    // the old process actually released the file handle, rather than
-    // hoping 2 seconds was long enough.
     Lines.Add(Format('del /f /q "%s.old" 2>nul', [BatchPath(AppExe)]));
-    Lines.Add(
-      Format('ren "%s" "%s.old" 2>nul',
-        [BatchPath(AppExe), BatchPath(ExeName)]));
-    Lines.Add(
-      Format('if not exist "%s" goto RENAMED', [BatchPath(AppExe)]));
+    Lines.Add(Format('ren "%s" "%s.old" 2>nul',
+      [BatchPath(AppExe), BatchPath(ExeName)]));
+    Lines.Add(Format('if not exist "%s" goto RENAMED', [BatchPath(AppExe)]));
     Lines.Add('set /a RETRIES+=1');
     Lines.Add('if %RETRIES% GEQ 15 goto RENAME_FAILED');
-    Lines.Add('timeout /t 1 /nobreak > nul');
+    Lines.Add('timeout /t 1 /nobreak >nul');
     Lines.Add('goto WAITLOOP');
-    Lines.Add('');
     Lines.Add(':RENAMED');
-    Lines.Add(BuildBatchCopyCommand(SourcePath, AppDir));
-    Lines.Add('if errorlevel 1 goto COPY_FAILED');
+    Lines.Add(Format('if not exist "%s.old" goto RENAME_FAILED', [BatchPath(AppExe)]));
+    Lines.Add(Format('mkdir "%s" || goto RESTORE_EXE', [BatchPath(BackupRoot)]));
+
+    for I := 0 to High(PayloadFiles) do
+    begin
+      Entry := PayloadFiles[I];
+      if not IsSafeZipEntryPath(AppDir, Entry, Destination) or
+         not IsSafeZipEntryPath(SourcePath, Entry, Source) or
+         not IsSafeZipEntryPath(BackupRoot + '\files', Entry, Saved) then
+        raise EFileSystemException.CreateFmt('Invalid install file: %s', [Entry]);
+      if SameText(Destination, AppExe + '.old') then
+        raise EFileSystemException.Create('Payload may not replace the executable backup');
+
+      IndexText := IntToStr(I);
+      IsExe := SameText(Destination, AppExe);
+      Preserve := False;
+      for PreservedPath in PreserveFiles do
+        if SameText(StringReplace(PreservedPath, '/', '\', [rfReplaceAll]), Entry) then
+          Preserve := not IsExe;
+      Marker := BatchPath(BackupRoot + '\preserve-' + IndexText);
+
+      if not IsExe then
+      begin
+        Backup.Add(Format('if exist "%s\" goto RESTORE_EXE', [BatchPath(Destination)]));
+        Backup.Add(Format('if not exist "%s" goto BACKED_UP_%s',
+          [BatchPath(Destination), IndexText]));
+        if Preserve then
+          Backup.Add(Format('mkdir "%s" || goto RESTORE_EXE', [Marker]))
+        else
+        begin
+          EnsureDirectory(Backup, ExtractFileDir(Saved), 'goto RESTORE_EXE');
+          CopyToDir(Backup, Destination, ExtractFileDir(Saved), 'goto RESTORE_EXE');
+        end;
+        Backup.Add(':BACKED_UP_' + IndexText);
+      end;
+
+      if Preserve then
+        Install.Add(Format('if exist "%s\" goto COPIED_%s', [Marker, IndexText]));
+      EnsureDirectory(Install, ExtractFileDir(Destination), 'goto COPY_FAILED');
+      Install.Add('set VAU_LAST=' + IndexText);
+      CopyToDir(Install, Source, ExtractFileDir(Destination), 'goto COPY_FAILED');
+      if Preserve then
+        Install.Add(':COPIED_' + IndexText);
+
+      if IsExe then
+        Continue;
+      Restore.Add('if %VAU_LAST% LSS ' + IndexText + ' goto RESTORED_' + IndexText);
+      if Preserve then
+        Restore.Add(Format('if exist "%s\" goto RESTORED_%s', [Marker, IndexText]));
+      Restore.Add(Format('if not exist "%s" goto REMOVE_NEW_%s', [BatchPath(Saved), IndexText]));
+      Restore.Add('if not %VAU_LAST% == ' + IndexText + ' goto RESTORE_FILE_' + IndexText);
+      // A sharing violation can leave the installed file unchanged.
+      Restore.Add(Format('fc /b "%s" "%s" >nul 2>nul',
+        [BatchPath(Saved), BatchPath(Destination)]));
+      Restore.Add('if not errorlevel 1 goto RESTORED_' + IndexText);
+      Restore.Add(':RESTORE_FILE_' + IndexText);
+      CopyToDir(Restore, Saved, ExtractFileDir(Destination), 'set VAU_RESTORE_FAILED=1');
+      Restore.Add('goto RESTORED_' + IndexText);
+      Restore.Add(':REMOVE_NEW_' + IndexText);
+      Restore.Add(Format('if exist "%0:s" del /f /q "%0:s" 2>nul', [BatchPath(Destination)]));
+      Restore.Add(Format('if exist "%s" set VAU_RESTORE_FAILED=1', [BatchPath(Destination)]));
+      Restore.Add(':RESTORED_' + IndexText);
+    end;
+
+    Lines.AddStrings(Backup);
+    Lines.AddStrings(Install);
     Lines.Add(Format('if not exist "%s" goto COPY_FAILED', [BatchPath(AppExe)]));
-    Lines.Add('');
     Lines.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
-    Lines.Add(Format('del "%s"',
-      [BatchPath(IncludeTrailingPathDelimiter(ExtractFileDir(SourcePath)) + 'package.zip')]));
-    Lines.Add(Format('rd /s /q "%s"',
-      [BatchPath(SourcePath)]));
+    Lines.Add(Format('del "%s"', [BatchPath(Stage + 'package.zip')]));
+    Lines.Add(Format('rd /s /q "%s"', [BatchPath(SourcePath)]));
+    Lines.Add(Format('rd /s /q "%s"', [BatchPath(BackupRoot)]));
     Lines.Add('del "%~f0"');
     Lines.Add('exit /b 0');
-    Lines.Add('');
     Lines.Add(':COPY_FAILED');
-    // Files were only partially overwritten - restore the previous exe
-    // and relaunch it rather than leaving the app missing or half-updated.
-    // The extracted update in SourcePath is deliberately left on disk for
-    // inspection/retry instead of being deleted.
-    Lines.Add(Format('ren "%s.old" "%s"',
+    Lines.Add(Format('if exist "%0:s" del /f /q "%0:s" 2>nul', [BatchPath(AppExe)]));
+    Lines.AddStrings(Restore);
+    Lines.Add(':RESTORE_EXE');
+    Lines.Add(Format('ren "%s.old" "%s" || exit /b 2',
       [BatchPath(AppExe), BatchPath(ExeName)]));
+    Lines.Add('if defined VAU_RESTORE_FAILED exit /b 2');
     Lines.Add(Format('start "" "%s"', [BatchPath(AppExe)]));
-    Lines.Add('del "%~f0"');
-    Lines.Add('exit /b 1');
-    Lines.Add('');
     Lines.Add(':RENAME_FAILED');
-    // Couldn't get an exclusive lock on the exe in time. Nothing was
-    // touched - old exe is untouched, update stays in SourcePath.
-    Lines.Add('del "%~f0"');
     Lines.Add('exit /b 1');
-
     Result := Lines.Text;
   finally
+    Restore.Free;
+    Install.Free;
+    Backup.Free;
     Lines.Free;
   end;
 end;
@@ -1832,7 +1911,9 @@ function TUpdateEngine.ApplyUpdateWindows(
   const SourcePath: string): Boolean;
 var
   BatchFile: string;
-  BatchContent: TStringList;
+  UpdateFiles, PayloadFiles: TArray<string>;
+  I, SourcePrefixLength: Integer;
+  UpdateFile, Destination, ExistingPath: string;
   AppExe, NewExe, AppDir: string;
   TempName: array[0..MAX_PATH] of Char;
   CanWriteAppDir: Boolean;
@@ -1849,11 +1930,9 @@ begin
   {$ENDIF}
     Exit(False);
 
+  UpdateFiles := TDirectory.GetFiles(SourcePath, '*', TSearchOption.soAllDirectories);
   if FConfig.VerifyAuthenticode then
   begin
-    var UpdateFiles := TDirectory.GetFiles(
-      SourcePath, '*.*', TSearchOption.soAllDirectories);
-    var UpdateFile: string;
     for UpdateFile in UpdateFiles do
       if (SameText(ExtractFileExt(UpdateFile), '.exe') or
           SameText(ExtractFileExt(UpdateFile), '.dll')) and
@@ -1868,33 +1947,43 @@ begin
   BatchFile := IncludeTrailingPathDelimiter(ExtractFileDir(SourcePath)) +
     'apply.cmd';
 
-  BatchContent := TStringList.Create;
-  try
-    BatchContent.Text := BuildApplyScript(AppExe, SourcePath, AppDir);
-
-    if not CreateExclusiveStagingFile(BatchFile) then
-      raise EFileSystemException.CreateFmt(
-        'Could not exclusively create update helper "%s" (Windows error %d)',
-        [BatchFile, GetLastError]);
-    BatchContent.SaveToFile(BatchFile);
-
-    CanWriteAppDir := GetTempFileName(
-      PChar(IncludeTrailingPathDelimiter(AppDir)), 'vau', 0, TempName) <> 0;
-    if CanWriteAppDir then
-      DeleteFile(TempName);
-
-    if not CanWriteAppDir then
-      raise EFileSystemException.Create(
-        'Install location not writable; a signed elevated helper is required');
-
-    // TODO: replace this non-elevated batch with a dedicated signed helper.
-    if ShellExecute(0, 'open',
-      PChar(BatchFile), nil, nil, SW_HIDE) <= 32 then
-      Exit(False);
-    Result := True;
-  finally
-    BatchContent.Free;
+  SourcePrefixLength := Length(IncludeTrailingPathDelimiter(SourcePath));
+  SetLength(PayloadFiles, Length(UpdateFiles));
+  for I := 0 to High(UpdateFiles) do
+  begin
+    PayloadFiles[I] := Copy(UpdateFiles[I], SourcePrefixLength + 1, MaxInt);
+    if not IsSafeZipEntryPath(AppDir, PayloadFiles[I], Destination) then
+      raise EFileSystemException.CreateFmt('Unsafe install destination: %s', [PayloadFiles[I]]);
+    ExistingPath := Destination;
+    while (GetFileAttributes(PChar(ExistingPath)) = INVALID_FILE_ATTRIBUTES) and
+          (GetLastError in [ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND]) and
+          not SameText(ExistingPath, AppDir) do
+      ExistingPath := ExtractFileDir(ExistingPath);
+    if not IsPathWithoutReparsePoints(ExistingPath) then
+      raise EFileSystemException.CreateFmt('Unsafe install destination: %s', [Destination]);
   end;
+
+  if not CreateExclusiveStagingFile(BatchFile) then
+    raise EFileSystemException.CreateFmt(
+      'Could not exclusively create update helper "%s" (Windows error %d)',
+      [BatchFile, GetLastError]);
+  TFile.WriteAllBytes(BatchFile, TEncoding.UTF8.GetBytes(
+    BuildApplyScript(AppExe, SourcePath, AppDir, PayloadFiles, FConfig.PreserveFiles)));
+
+  CanWriteAppDir := GetTempFileName(
+    PChar(IncludeTrailingPathDelimiter(AppDir)), 'vau', 0, TempName) <> 0;
+  if CanWriteAppDir then
+    DeleteFile(TempName);
+
+  if not CanWriteAppDir then
+    raise EFileSystemException.Create(
+      'Install location not writable; a signed elevated helper is required');
+
+  // TODO: replace this non-elevated batch with a dedicated signed helper.
+  if ShellExecute(0, 'open',
+    PChar(BatchFile), nil, nil, SW_HIDE) <= 32 then
+    Exit(False);
+  Result := True;
 end;
 {$ENDIF}
 

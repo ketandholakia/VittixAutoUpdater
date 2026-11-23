@@ -84,6 +84,7 @@ type
 {$ENDIF}
     [Test] procedure BatchCopyIntegrationHandlesWindowsMetacharacters;
     [Test] procedure ApplyScriptDeletesStaleBackupBeforeRename;
+    [Test] procedure ApplyScriptBacksUpRestoresAndPreservesFiles;
   end;
 
 implementation
@@ -1924,7 +1925,7 @@ var
   Script: string;
   DeleteAt, RenameAt, CheckAt: Integer;
 begin
-  Script := BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App');
+  Script := BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App', ['App.exe'], nil);
   DeleteAt := Pos('del /f /q "C:\App\App.exe.old" 2>nul', Script);
   RenameAt := Pos('ren "C:\App\App.exe" "App.exe.old" 2>nul', Script);
   CheckAt := Pos('if not exist "C:\App\App.exe" goto RENAMED', Script);
@@ -1932,6 +1933,24 @@ begin
   Assert.IsTrue(DeleteAt > Pos(':WAITLOOP', Script));
   Assert.IsTrue(RenameAt > DeleteAt);
   Assert.IsTrue(CheckAt > RenameAt);
+end;
+
+procedure TVittixAutoUpdaterTests.ApplyScriptBacksUpRestoresAndPreservesFiles;
+var
+  Script: string;
+  BackupAt, CopyAt, RestoreAt: Integer;
+begin
+  Script := BuildApplyScript('C:\App\App.exe', 'C:\Stage\extract', 'C:\App',
+    ['App.exe', 'config\data.bin', 'config\settings.ini'], ['config/settings.ini']);
+  BackupAt := Pos('xcopy "C:\App\config\data.bin" "C:\Stage\backup\files\config"', Script);
+  CopyAt := Pos('xcopy "C:\Stage\extract\config\data.bin" "C:\App\config" /Y /R', Script);
+  RestoreAt := Pos('xcopy "C:\Stage\backup\files\config\data.bin" "C:\App\config"', Script);
+  Assert.AreEqual(1, Pos('chcp 65001 >nul', Script));
+  Assert.IsTrue(BackupAt > 0);
+  Assert.IsTrue(CopyAt > BackupAt);
+  Assert.IsTrue(RestoreAt > CopyAt);
+  Assert.IsTrue(Pos('if exist "C:\Stage\backup\preserve-2\" goto COPIED_2', Script) > 0);
+  Assert.IsTrue(Pos('del /f /q "C:\App\App.exe" 2>nul', Script) > CopyAt);
 end;
 
 initialization

@@ -342,7 +342,7 @@ var
 begin
   Writer := TWriter.Create(Stream, 1024);
   try
-    Writer.WriteInteger(2); // ConfigData serialization format version
+    Writer.WriteInteger(3); // ConfigData serialization format version
     Writer.WriteString(FConfig.AppName);
     WriteStringArray(FConfig.ManifestUrls);
     Writer.WriteInteger(FConfig.CheckInterval);
@@ -371,6 +371,7 @@ begin
     Writer.WriteInteger(FConfig.MaxArchivePathDepth);
     Writer.WriteInteger(FConfig.MaxArchivePathLength);
     Writer.WriteInteger(FConfig.MaxArchiveExpansionRatio);
+    WriteStringArray(FConfig.PreserveFiles);
   finally
     Writer.Free;
   end;
@@ -398,7 +399,7 @@ begin
   Reader := TReader.Create(Stream, 1024);
   try
     FormatVersion := Reader.ReadInteger;
-    if not (FormatVersion in [1, 2]) then
+    if not (FormatVersion in [1, 2, 3]) then
       raise EReadError.CreateFmt(
         'Unsupported updater configuration stream version %d', [FormatVersion]);
     ConfigValue := TUpdaterConfig.Default;
@@ -433,6 +434,8 @@ begin
       ConfigValue.MaxArchivePathLength := Reader.ReadInteger;
       ConfigValue.MaxArchiveExpansionRatio := Reader.ReadInteger;
     end;
+    if FormatVersion >= 3 then
+      ReadStringArray(ConfigValue.PreserveFiles);
     SetConfig(ConfigValue);
   finally
     Reader.Free;

@@ -177,7 +177,7 @@ MyApp_v2.1.5.zip
 
 **Important:** The updater will:
 1. Extract all files from the ZIP
-2. Backup the current executable as `MyApp.exe.old`
+2. Back up the executable as `MyApp.exe.old` and save files to be overwritten under `backup\` in private staging.
 3. Replace all files
 4. Restart the application
 
@@ -479,6 +479,8 @@ end);
 ```
 
 ### Rollback on Failure
+
+Set `TUpdaterConfig.PreserveFiles` to application-relative paths such as `config/settings.ini` to keep existing files. Missing files are installed from the payload. The list defaults to empty. On copy failure, the helper removes newly copied files, restores previous files and the executable, and restarts the old application after restoration succeeds.
 ```pascal
 if not Engine.ApplyUpdate then
 begin

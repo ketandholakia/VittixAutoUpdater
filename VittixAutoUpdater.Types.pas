@@ -146,6 +146,7 @@ type
     ManifestPublicKey: string;   // ECDSA P-256 X||Y, hex encoded
     ManifestTrustedPublicKeys: TArray<string>; // provisioned ECDSA P-256 X||Y keys
     AllowInsecureUnsignedManifests: Boolean; // explicit migration-only escape hatch
+    PreserveFiles: TArray<string>;
     ManifestHmacKey: string; // DEPRECATED: ignored; use ManifestPublicKey
 
     // ZIP extraction resource limits. Zero or negative values are rejected.
@@ -386,6 +387,7 @@ begin
   Result.ManifestPublicKey := '';
   SetLength(Result.ManifestTrustedPublicKeys, 0);
   Result.AllowInsecureUnsignedManifests := False;
+  Result.PreserveFiles := nil;
   Result.ManifestHmacKey := '';
   Result.MaxArchiveBytes := 536870912; // 512 MiB
   Result.MaxArchiveEntryCount := 4096;

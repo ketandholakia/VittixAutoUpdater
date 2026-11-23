@@ -645,3 +645,6 @@ end;
 The VittixAutoUpdater visual components provide a complete, professional solution for application updating in Delphi. With multiple UI styles, comprehensive event handling, and extensive customization options, they can be adapted to fit any application's needs.
 
 For additional support and examples, refer to the demo application and the main VittixAutoUpdater documentation.
+### Preserving local files during installation
+
+Set PreserveFiles in the visual component configuration record to application-relative file paths such as config/settings.ini. Existing files on the list are kept. Missing files are installed from the payload. The setting is saved in ConfigData version 3. ConfigData versions 1 and 2 load with an empty list.
