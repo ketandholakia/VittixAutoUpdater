@@ -960,7 +960,7 @@ begin
 
   // Update button states based on current state
   case State of
-    usIdle:
+    usIdle, usFailed:
     begin
       FCheckButton.Enabled := True;
       FDownloadButton.Enabled := False;
@@ -1140,7 +1140,18 @@ begin
         ucrNoUpdateAvailable:
           FStatusLabel.Caption := 'Application is up to date';
         ucrError:
+        begin
           FStatusLabel.Caption := 'Error: ' + Event.Text;
+          if (Event.Text = UnsupportedUncInstall) or (Event.Text = UnsupportedNetworkInstall) then
+          begin
+            FInfoMemo.Clear;
+            FReleaseNotesMemo.Clear;
+            if Assigned(FOnUpdateComplete) then
+              FOnUpdateComplete(Self, False, Event.Text)
+            else
+              MessageDlg(Event.Text, mtError, [mbOK], 0);
+          end;
+        end;
       end;
     end;
 
@@ -1153,7 +1164,9 @@ begin
           InstallUpdate;
       end
       else if Assigned(FOnUpdateComplete) then
-        FOnUpdateComplete(Self, False, Event.Text);
+        FOnUpdateComplete(Self, False, Event.Text)
+      else if (Event.Text = UnsupportedUncInstall) or (Event.Text = UnsupportedNetworkInstall) then
+        MessageDlg(Event.Text, mtError, [mbOK], 0);
     end;
 
     queInstallComplete:
@@ -1294,11 +1307,15 @@ begin
   FDownloadThread := TThread.CreateAnonymousThread(
     procedure
     begin
-      var Success := FEngine.DownloadUpdate(FCurrentManifest);
+      var ErrorMessage: string;
+      var Success := FEngine.DownloadUpdate(FCurrentManifest, ErrorMessage);
       var Event := Default(TQueuedUIEvent);
       Event.Kind := queDownloadComplete;
       Event.Success := Success;
-      Event.Text := 'Download failed';
+      if ErrorMessage <> '' then
+        Event.Text := ErrorMessage
+      else
+        Event.Text := 'Download failed';
       QueueUIEvent(Event);
     end);
   FDownloadThread.FreeOnTerminate := False;
