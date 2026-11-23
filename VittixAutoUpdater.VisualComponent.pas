@@ -16,7 +16,7 @@ type
   // Events
   TUpdateStateChangeEvent = procedure(Sender: TObject; NewState: TUpdateState;
     const StatusMessage: string) of object;
-  TDownloadProgressEvent = procedure(Sender: TObject; BytesReceived, TotalBytes: Int64;
+  TVittixDownloadProgressEvent = procedure(Sender: TObject; BytesReceived, TotalBytes: Int64;
     PercentComplete: Integer; var Cancel: Boolean) of object;
   TUpdateDecisionEvent = procedure(Sender: TObject; const Manifest: TUpdateManifest;
     var Decision: Boolean) of object;
@@ -112,7 +112,7 @@ type
 
     // Events
     FOnStateChange: TUpdateStateChangeEvent;
-    FOnDownloadProgress: TDownloadProgressEvent;
+    FOnDownloadProgress: TVittixDownloadProgressEvent;
     FOnUpdateDecision: TUpdateDecisionEvent;
     FOnUpdateComplete: TUpdateCompleteEvent;
     FOnSettingsClick: TNotifyEvent;
@@ -212,7 +212,7 @@ type
 
     // Events
     property OnStateChange: TUpdateStateChangeEvent read FOnStateChange write FOnStateChange;
-    property OnDownloadProgress: TDownloadProgressEvent read FOnDownloadProgress write FOnDownloadProgress;
+    property OnDownloadProgress: TVittixDownloadProgressEvent read FOnDownloadProgress write FOnDownloadProgress;
     property OnUpdateDecision: TUpdateDecisionEvent read FOnUpdateDecision write FOnUpdateDecision;
     property OnUpdateComplete: TUpdateCompleteEvent read FOnUpdateComplete write FOnUpdateComplete;
     property OnSettingsClick: TNotifyEvent read FOnSettingsClick write FOnSettingsClick;
@@ -342,7 +342,7 @@ var
 begin
   Writer := TWriter.Create(Stream, 1024);
   try
-    Writer.WriteInteger(3); // ConfigData serialization format version
+    Writer.WriteInteger(4); // ConfigData serialization format version
     Writer.WriteString(FConfig.AppName);
     WriteStringArray(FConfig.ManifestUrls);
     Writer.WriteInteger(FConfig.CheckInterval);
@@ -356,14 +356,12 @@ begin
     Writer.WriteString(FConfig.UserAgent);
     Writer.WriteBoolean(FConfig.RequireChecksum);
     Writer.WriteBoolean(FConfig.RequireHttps);
-    Writer.WriteBoolean(FConfig.RequireSecureConfig);
     Writer.WriteBoolean(FConfig.VerifyManifestSignature);
     Writer.WriteBoolean(FConfig.VerifyAuthenticode);
     WriteStringArray(FConfig.PinnedPublisherThumbprints);
     Writer.WriteString(FConfig.ManifestPublicKey);
     WriteStringArray(FConfig.ManifestTrustedPublicKeys);
     Writer.WriteBoolean(FConfig.AllowInsecureUnsignedManifests);
-    Writer.WriteString(FConfig.ManifestHmacKey);
     Writer.WriteString(IntToStr(FConfig.MaxArchiveBytes));
     Writer.WriteInteger(FConfig.MaxArchiveEntryCount);
     Writer.WriteString(IntToStr(FConfig.MaxArchiveTotalUncompressedBytes));
@@ -399,7 +397,7 @@ begin
   Reader := TReader.Create(Stream, 1024);
   try
     FormatVersion := Reader.ReadInteger;
-    if not (FormatVersion in [1, 2, 3]) then
+    if not (FormatVersion in [1, 2, 3, 4]) then
       raise EReadError.CreateFmt(
         'Unsupported updater configuration stream version %d', [FormatVersion]);
     ConfigValue := TUpdaterConfig.Default;
@@ -416,14 +414,16 @@ begin
     ConfigValue.UserAgent := Reader.ReadString;
     ConfigValue.RequireChecksum := Reader.ReadBoolean;
     ConfigValue.RequireHttps := Reader.ReadBoolean;
-    ConfigValue.RequireSecureConfig := Reader.ReadBoolean;
+    if FormatVersion <= 3 then
+      Reader.ReadBoolean; // Discard the legacy secure-config flag.
     ConfigValue.VerifyManifestSignature := Reader.ReadBoolean;
     ConfigValue.VerifyAuthenticode := Reader.ReadBoolean;
     ReadStringArray(ConfigValue.PinnedPublisherThumbprints);
     ConfigValue.ManifestPublicKey := Reader.ReadString;
     ReadStringArray(ConfigValue.ManifestTrustedPublicKeys);
     ConfigValue.AllowInsecureUnsignedManifests := Reader.ReadBoolean;
-    ConfigValue.ManifestHmacKey := Reader.ReadString;
+    if FormatVersion <= 3 then
+      Reader.ReadString; // Discard the legacy HMAC key.
     if FormatVersion >= 2 then
     begin
       ConfigValue.MaxArchiveBytes := StrToInt64(Reader.ReadString);

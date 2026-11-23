@@ -234,7 +234,7 @@ type
     property OnStateChange: TUpdateStateChangeEvent;
     
     // Download progress updates
-    property OnDownloadProgress: TDownloadProgressEvent;
+    property OnDownloadProgress: TVittixDownloadProgressEvent;
     
     // User decision requests
     property OnUpdateDecision: TUpdateDecisionEvent;
@@ -647,4 +647,4 @@ The VittixAutoUpdater visual components provide a complete, professional solutio
 For additional support and examples, refer to the demo application and the main VittixAutoUpdater documentation.
 ### Preserving local files during installation
 
-Set PreserveFiles in the visual component configuration record to application-relative file paths such as config/settings.ini. Existing files on the list are kept. Missing files are installed from the payload. The setting is saved in ConfigData version 3. ConfigData versions 1 and 2 load with an empty list.
+Set PreserveFiles in the visual component configuration record to application-relative file paths such as config/settings.ini. Existing files on the list are kept. Missing files are installed from the payload. The setting is saved in ConfigData version 4. ConfigData versions 1 and 2 load with an empty list. Version 3 also loads.

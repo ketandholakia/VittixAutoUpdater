@@ -20,6 +20,6 @@ Key concerns:
 
 ## API/maintenance assessment
 
-Separate a transport-neutral engine package from VCL adapter/design package; provide an explicit immutable configuration validation result and stable error codes; document thread affinity and callback guarantees; make engine operations serialized/cancellable with owned task lifetime; centralize transitions and ensure all terminal paths clean or preserve files by policy. Keep source compatibility consciously versioned; current split between `TViConAutoUpdater` and `TVittixAutoUpdaterUI` needs deprecation/clarification.
+Separate a transport-neutral engine package from VCL adapter/design package; provide an explicit immutable configuration validation result and stable error codes; document thread affinity and callback guarantees; make engine operations serialized/cancellable with owned task lifetime; centralize transitions and ensure all terminal paths clean or preserve files by policy. Keep source compatibility consciously versioned.
 
 No code was modified and no build was run. Delphi compiler availability was not established in this audit.

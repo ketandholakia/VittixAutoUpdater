@@ -23,7 +23,6 @@ type
     FProxy: string;
     FOnLog: TNetworkLogEvent;
     FLastError: string;
-    FHmacKey: string;
     FRequireHttps: Boolean;
 {$IFDEF VITTIX_TEST_LOOPBACK}
     FAllowLoopbackHttpForTests: Boolean;
@@ -91,9 +90,6 @@ type
     property LastError: string read FLastError;
     property OnLog: TNetworkLogEvent read FOnLog write FOnLog;
 
-    // Deprecated compatibility property; HMAC is no longer used to validate
-    // manifests. Configure ManifestPublicKey and VerifyManifestSignatures.
-    property HmacKey: string read FHmacKey write FHmacKey;
     property RequireHttps: Boolean read FRequireHttps write FRequireHttps;
 {$IFDEF VITTIX_TEST_LOOPBACK}
     // Exists only in the DUnitX test build; production binaries have no switch.
@@ -110,10 +106,7 @@ type
       read FAllowInsecureUnsignedManifests write FAllowInsecureUnsignedManifests;
   end;
 
-// Legacy HMAC helpers retained for source compatibility; manifest validation
-// uses ECDSA P-256 through CNG.
 function BytesToHex(const Data: TBytes): string;
-function ComputeHMACSHA256(const Key, Data: TBytes): TBytes;
 function VerifyManifestSignatureBytes(const ManifestBytes, Signature: TBytes;
   const PublicKeyHex: string): Boolean;
 function ManifestSigningKeyId(const PublicKeyHex: string): string;
@@ -267,47 +260,6 @@ begin
     Result[I * 2 + 1] := HexChars[Data[I] shr 4];
     Result[I * 2 + 2] := HexChars[Data[I] and $0F];
   end;
-end;
-
-// HMAC-SHA256 per RFC 2104, built on top of System.Hash's plain SHA-256
-// (Delphi's System.Hash does not expose HMAC directly).
-function ComputeHMACSHA256(const Key, Data: TBytes): TBytes;
-const
-  BlockSize = 64; // SHA-256 block size in bytes
-var
-  KeyBlock, InnerPad, OuterPad, InnerHash: TBytes;
-  Hash: THashSHA2;
-  I: Integer;
-begin
-  SetLength(KeyBlock, BlockSize);
-  FillChar(KeyBlock[0], BlockSize, 0);
-
-  if Length(Key) > BlockSize then
-  begin
-    Hash := THashSHA2.Create(SHA256);
-    Hash.Update(Key);
-    Move(Hash.HashAsBytes[0], KeyBlock[0], Length(Hash.HashAsBytes));
-  end
-  else if Length(Key) > 0 then
-    Move(Key[0], KeyBlock[0], Length(Key));
-
-  SetLength(InnerPad, BlockSize);
-  SetLength(OuterPad, BlockSize);
-  for I := 0 to BlockSize - 1 do
-  begin
-    InnerPad[I] := Byte(KeyBlock[I] xor $36);
-    OuterPad[I] := Byte(KeyBlock[I] xor $5C);
-  end;
-
-  Hash := THashSHA2.Create(SHA256);
-  Hash.Update(InnerPad);
-  Hash.Update(Data);
-  InnerHash := Hash.HashAsBytes;
-
-  Hash := THashSHA2.Create(SHA256);
-  Hash.Update(OuterPad);
-  Hash.Update(InnerHash);
-  Result := Hash.HashAsBytes;
 end;
 
 {$IFDEF VITTIX_TEST_LOOPBACK}
@@ -755,7 +707,6 @@ begin
   FMaxRetries := 3;
   FUserAgent := 'VI_CON-AutoUpdater/1.0';
   FProxy := '';
-  FHmacKey := '';
   FRequireHttps := True;
   FVerifyManifestSignature := True;
   FAllowInsecureUnsignedManifests := False;
@@ -1071,11 +1022,11 @@ begin
     if AppObj.TryGetValue<string>('severity', Value) then
     begin
       if SameText(Value, 'critical') then
-        Manifest.Severity := usCritical
+        Manifest.Severity := sevCritical
       else if SameText(Value, 'recommended') then
-        Manifest.Severity := usRecommended
+        Manifest.Severity := sevRecommended
       else
-        Manifest.Severity := usOptional;
+        Manifest.Severity := sevOptional;
     end;
 
     if not Manifest.IsValid then

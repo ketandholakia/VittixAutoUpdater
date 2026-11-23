@@ -62,9 +62,9 @@ type
   // Severity levels
   // ================================
   TUpdateSeverity = (
-    usOptional,
-    usRecommended,
-    usCritical
+    sevOptional,
+    sevRecommended,
+    sevCritical
   );
 
   // ================================
@@ -139,7 +139,6 @@ type
     // Security options
     RequireChecksum: Boolean;    // reject any manifest with no checksum
     RequireHttps: Boolean;       // reject plaintext HTTP and redirects
-    RequireSecureConfig: Boolean; // retained compatibility field; signatures are mandatory by default
     VerifyManifestSignature: Boolean;
     VerifyAuthenticode: Boolean;
     PinnedPublisherThumbprints: TArray<string>; // SHA-256 cert thumbprints
@@ -147,7 +146,6 @@ type
     ManifestTrustedPublicKeys: TArray<string>; // provisioned ECDSA P-256 X||Y keys
     AllowInsecureUnsignedManifests: Boolean; // explicit migration-only escape hatch
     PreserveFiles: TArray<string>;
-    ManifestHmacKey: string; // DEPRECATED: ignored; use ManifestPublicKey
 
     // ZIP extraction resource limits. Zero or negative values are rejected.
     MaxArchiveBytes: Int64;
@@ -387,7 +385,6 @@ begin
 
   Result.RequireChecksum := True;  // fail closed by default
   Result.RequireHttps := True;
-  Result.RequireSecureConfig := True;
   Result.VerifyManifestSignature := True;
   Result.VerifyAuthenticode := False;
   SetLength(Result.PinnedPublisherThumbprints, 0);
@@ -395,7 +392,6 @@ begin
   SetLength(Result.ManifestTrustedPublicKeys, 0);
   Result.AllowInsecureUnsignedManifests := False;
   Result.PreserveFiles := nil;
-  Result.ManifestHmacKey := '';
   Result.MaxArchiveBytes := 536870912; // 512 MiB
   Result.MaxArchiveEntryCount := 4096;
   Result.MaxArchiveTotalUncompressedBytes := 1073741824; // 1 GiB
@@ -456,7 +452,7 @@ begin
   FillChar(Result.MinVersion, SizeOf(Result.MinVersion), 0);
   Result.ReleaseDate := 0;
   Result.IssuedAt := 0;
-  Result.Severity := usOptional;
+  Result.Severity := sevOptional;
 end;
 
 end.

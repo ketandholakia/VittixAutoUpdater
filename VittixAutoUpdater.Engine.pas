@@ -175,13 +175,8 @@ uses
 {$IFDEF MSWINDOWS}
   Windows, ShellAPI, Forms, System.Hash, System.Win.Registry,
 {$ENDIF}
-  {$IFDEF DELPHIXE_UP}
   System.Zip, System.IOUtils, System.Types, System.StrUtils,
   VittixAutoUpdater.Staging;
-  {$ELSE}
-  Zip, IOUtils, StrUtils,
-  VittixAutoUpdater.Staging;
-  {$ENDIF}
 
 type
   TZipCancellationObserver = class
@@ -1553,15 +1548,6 @@ begin
     if Assigned(FOnSecurityWarning) then
       FOnSecurityWarning(Self, 'ManifestPublicKey is not configured.');
   end;
-  if FConfig.ManifestHmacKey <> '' then
-  begin
-    OutputDebugString(
-      'VittixAutoUpdater: ManifestHmacKey is deprecated and ignored; '
-      + 'a ManifestPublicKey is required for signed manifests.');
-    if Assigned(FOnSecurityWarning) then
-      FOnSecurityWarning(Self,
-        'ManifestHmacKey is ignored; configure ManifestPublicKey.');
-  end;
 end;
 
 function TUpdateEngine.DownloadUpdate(const Manifest: TUpdateManifest): Boolean;
@@ -1961,11 +1947,7 @@ function TUpdateEngine.IsSafeToApply: Boolean;
 begin
   Result :=
     (FDownloadedFile <> '') and
-    {$IFDEF DELPHIXE_UP}
     TFile.Exists(FDownloadedFile);
-    {$ELSE}
-    FileExists(FDownloadedFile);
-    {$ENDIF}
 end;
 
 function TUpdateEngine.ApplyUpdate: Boolean;
@@ -2090,11 +2072,7 @@ begin
     IncludeTrailingPathDelimiter(SourcePath) +
     ExtractFileName(AppExe);
 
-  {$IFDEF DELPHIXE_UP}
   if not TFile.Exists(NewExe) then
-  {$ELSE}
-  if not FileExists(NewExe) then
-  {$ENDIF}
     Exit(False);
 
   UpdateFiles := TDirectory.GetFiles(SourcePath, '*', TSearchOption.soAllDirectories);
@@ -2260,16 +2238,7 @@ end;
 // Compatibility function implementation
 function GetTempDir: string;
 begin
-  {$IFDEF DELPHIXE_UP}
   Result := TPath.GetTempPath;
-  {$ELSE}
-  Result := GetEnvironmentVariable('TEMP');
-  if Result = '' then
-    Result := GetEnvironmentVariable('TMP');
-  if Result = '' then
-    Result := 'C:\TEMP\';
-  Result := IncludeTrailingPathDelimiter(Result);
-  {$ENDIF}
 end;
 
 // Simple manual file enumeration - guaranteed compatibility

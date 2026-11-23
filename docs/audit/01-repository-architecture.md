@@ -11,7 +11,6 @@ Reviewed the current worktree on 2026-10-27. It contains numerous pre-existing m
 | Core/runtime | `VittixAutoUpdater.Types.pas`, `VittixAutoUpdater.Network.pas`, `VittixAutoUpdater.Engine.pas` | Versions, manifest/config/event records; HTTP/JSON/signature/checksum/download; state machine, extraction, Windows apply |
 | VCL UI | `VittixAutoUpdater.VisualComponent.pas`, `VittixAutoUpdater.Settings.pas/.dfm` | Palette component, progress UI, settings form |
 | Design-time | `VittixAutoUpdater.ComponentReg.pas`, `VittixAutoUpdater.PropertyEditors.pas` | Component/property registration and editor |
-| Legacy-looking API | `VittixAutoUpdater.Component.pas` | `TViConAutoUpdater`, separate older API; not listed in the runtime package |
 | Packages/projects | Runtime/design `.dpk/.dproj`, `vittixAutoupdater.groupproj` | Delphi package builds; runtime is VCL and Windows-oriented |
 | Example/tools | `demo/` VCL demo, `ManifestGenerator/`, `generate_manifest.py`, `deploy-update.sh`, `BuildPackages.bat` | Demo, manifest/deployment helpers, package build |
 | Tests | `Test.VittixAutoUpdater.pas`, `TestCompilation.dpr/.dproj`, manual checklist | DUnitX fixture with loopback HTTP test server behind define; manual GUI checklist |
@@ -35,7 +34,7 @@ Runtime package requires RTL, VCL, `inet`, `vclimg`, `vclx`, `VclSmp`; design pa
 
 ## Public API surface
 
-`TAppVersion` is a four-`Word` record and supports numeric operators and `TryParse` (`Types.pas:30-60, 191-276`). `TUpdateManifest`, `TUpdaterConfig`, severity/state enums, and events are in `Types.pas:62-153`. `TUpdateEngine` exposes config, state, version, check/download/apply/cancel/reset, and events (`Engine.pas:36-106`). `TUpdateNetworkManager` exposes manifest fetch, download, cancel, transport knobs, signature settings, and helpers (`Network.pas:11-125`). `TVittixAutoUpdaterUI` is the registered visual entry point; its public methods include check, download, install, cancel (`VisualComponent.pas:126-212`). `TViConAutoUpdater` in `Component.pas` is a second API, but it is not in either package's `contains` list.
+`TAppVersion` is a four-`Word` record and supports numeric operators and `TryParse` (`Types.pas:30-60, 191-276`). `TUpdateManifest`, `TUpdaterConfig`, severity/state enums, and events are in `Types.pas:62-153`. `TUpdateEngine` exposes config, state, version, check/download/apply/cancel/reset, and events (`Engine.pas:36-106`). `TUpdateNetworkManager` exposes manifest fetch, download, cancel, transport knobs, signature settings, and helpers (`Network.pas:11-125`). `TVittixAutoUpdaterUI` is the registered visual entry point; its public methods include check, download, install, cancel (`VisualComponent.pas:126-212`).
 
 ## Platform/compiler conclusions
 

@@ -22,6 +22,7 @@ type
     [Test] procedure TimeoutCleansPrivateStaging;
     [Test] procedure RegistryCorruptionAndAccessFailureFailClosed;
     [Test] procedure VclComponentStreamsConfigAndDeliversEventsOnMainThread;
+    [Test] procedure VisualComponentLoadsLegacyConfigData;
     [Test] procedure VclComponentSupportsDataModuleOwnershipAndRepeatedChecks;
     [Test] procedure EngineAllowsImmediateRecheckFromFailureCallback;
     [Test] procedure EngineCancelSuppressesQueuedCompletion;
@@ -1242,6 +1243,92 @@ begin
   end;
 end;
 
+procedure TVittixAutoUpdaterIntegrationTests.VisualComponentLoadsLegacyConfigData;
+var
+  ConfigBytes, Binary: TMemoryStream;
+  Text: TStringStream;
+  Writer: TWriter;
+  Updater: TVittixAutoUpdaterUI;
+  Bytes: TBytes;
+  Version: Integer;
+begin
+  for Version := 1 to 3 do
+  begin
+    ConfigBytes := TMemoryStream.Create;
+    Binary := TMemoryStream.Create;
+    Updater := TVittixAutoUpdaterUI.Create(nil);
+    try
+      Writer := TWriter.Create(ConfigBytes, 1024);
+      try
+        Writer.WriteInteger(Version);
+        Writer.WriteString('Legacy');
+        Writer.WriteInteger(0); // ManifestUrls count
+        Writer.WriteInteger(30);
+        Writer.WriteBoolean(False); // AutoDownload
+        Writer.WriteBoolean(False); // AutoInstall
+        Writer.WriteBoolean(False); // AllowDowngrade
+        Writer.WriteString('');
+        Writer.WriteInteger(30);
+        Writer.WriteInteger(3);
+        Writer.WriteInteger(30);
+        Writer.WriteString('Legacy updater');
+        Writer.WriteBoolean(True); // RequireChecksum
+        Writer.WriteBoolean(True); // RequireHttps
+        Writer.WriteBoolean(False); // Discarded RequireSecureConfig
+        Writer.WriteBoolean(True); // VerifyManifestSignature
+        Writer.WriteBoolean(False); // VerifyAuthenticode
+        Writer.WriteInteger(0); // PinnedPublisherThumbprints count
+        Writer.WriteString('');
+        Writer.WriteInteger(0); // ManifestTrustedPublicKeys count
+        Writer.WriteBoolean(False); // AllowInsecureUnsignedManifests
+        Writer.WriteString('discarded legacy key');
+        if Version >= 2 then
+        begin
+          Writer.WriteString('12345678');
+          Writer.WriteInteger(25);
+          Writer.WriteString('345678');
+          Writer.WriteString('123456');
+          Writer.WriteInteger(12);
+          Writer.WriteInteger(200);
+          Writer.WriteInteger(80);
+        end;
+        if Version >= 3 then
+        begin
+          Writer.WriteInteger(1);
+          Writer.WriteString('config/settings.ini');
+        end;
+      finally
+        Writer.Free;
+      end;
+      SetLength(Bytes, ConfigBytes.Size);
+      ConfigBytes.Position := 0;
+      ConfigBytes.ReadBuffer(Bytes[0], Length(Bytes));
+      Text := TStringStream.Create('object Updater: TVittixAutoUpdaterUI' + sLineBreak +
+        '  ConfigData = {' + BytesToHex(Bytes) + '}' + sLineBreak + 'end', TEncoding.ASCII);
+      try
+        ObjectTextToBinary(Text, Binary);
+      finally
+        Text.Free;
+      end;
+      Binary.Position := 0;
+      Binary.ReadComponent(Updater);
+      Assert.AreEqual('Legacy', Updater.Config.AppName);
+      Assert.IsTrue(Updater.Config.VerifyManifestSignature);
+      Assert.IsFalse(Updater.Config.AllowInsecureUnsignedManifests);
+      if Version >= 2 then
+        Assert.AreEqual(25, Updater.Config.MaxArchiveEntryCount);
+      if Version < 3 then
+        Assert.AreEqual(0, Length(Updater.Config.PreserveFiles))
+      else
+        Assert.AreEqual('config/settings.ini', Updater.Config.PreserveFiles[0]);
+    finally
+      Updater.Free;
+      Binary.Free;
+      ConfigBytes.Free;
+    end;
+  end;
+end;
+
 procedure TVittixAutoUpdaterIntegrationTests.VclComponentStreamsConfigAndDeliversEventsOnMainThread;
 var
   Key: TTestSigningKey;
@@ -1276,6 +1363,7 @@ begin
     Config.MaxManifestAgeDays := 30;
     Config.MaxArchiveEntryCount := 777;
     Config.MaxArchiveSingleEntryBytes := 123456;
+    Config.PreserveFiles := TArray<string>.Create('config/settings.ini');
     Form := TForm.CreateNew(nil);
     Assert.IsTrue(Form.Handle <> 0, 'Test form window handle must be created');
     Form.Show;
@@ -1324,6 +1412,7 @@ begin
       Assert.IsTrue(Streamed.Config.VerifyManifestSignature);
       Assert.IsFalse(Streamed.Config.AllowInsecureUnsignedManifests);
       Assert.AreEqual(777, Streamed.Config.MaxArchiveEntryCount);
+      Assert.AreEqual('config/settings.ini', Streamed.Config.PreserveFiles[0]);
       Assert.AreEqual(Int64(123456), Streamed.Config.MaxArchiveSingleEntryBytes);
       Assert.AreEqual(uisStandard, Streamed.UIStyle);
       Assert.AreEqual(ubsBoth, Streamed.ButtonStyle);

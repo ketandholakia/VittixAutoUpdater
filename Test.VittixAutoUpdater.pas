@@ -71,7 +71,7 @@ type
     [Test] procedure RollbackExecutableRestoresCurrentWhenBackupIsLocked;
     [Test] procedure ApplyUpdateRejectsInvalidState;
     [Test] procedure SecurityWarningsAreReported;
-    [Test] procedure RequireSecureConfigBlocksUnsignedChecks;
+    [Test] procedure EngineRejectsUnsignedChecksWithoutOptIn;
     [Test] procedure HttpsAndRedirectRulesArePureAndStrict;
     [Test] procedure PublisherThumbprintComparisonIsNormalized;
     [Test] procedure ResumeRequiresMatchingRangeEtagAndSize;
@@ -972,7 +972,7 @@ function TVittixAutoUpdaterTests.ValidManifestJson(const IssuedAt: string): stri
 begin
   Result := Format(
     '{"Demo":{"version":"2.0.0.0","download_url":"https://example.invalid/app.zip",' +
-    '"issued_at":"%s","file_size":123,"checksum":"sha256:abc"}}',
+    '"issued_at":"%s","file_size":123,"checksum":"sha256:abc","severity":"recommended"}}',
     [IssuedAt]);
 end;
 
@@ -1025,6 +1025,7 @@ begin
     Manifest, ErrorMessage),
     ErrorMessage);
   Assert.AreEqual('2.0.0.0', Manifest.Version.ToString);
+  Assert.AreEqual<TUpdateSeverity>(sevRecommended, Manifest.Severity);
   Assert.AreEqual<Int64>(123, Manifest.FileSize);
   Assert.IsTrue(Manifest.ReleaseDate = EncodeDateTime(2026, 10, 20, 12, 0, 0, 0));
 end;
@@ -1531,7 +1532,6 @@ var
 begin
   Config := TUpdaterConfig.Default;
   Assert.IsTrue(Config.VerifyManifestSignature);
-  Assert.IsTrue(Config.RequireSecureConfig);
   Assert.IsFalse(Config.AllowInsecureUnsignedManifests);
   Manager := TUpdateNetworkManager.Create;
   SetLength(Urls, 0);
@@ -1617,14 +1617,15 @@ var
   Engine: TUpdateEngine;
 begin
   Config := TUpdaterConfig.Default;
-  Config.ManifestHmacKey := 'legacy-shared-secret';
+  Config.VerifyManifestSignature := False;
+  Config.AllowInsecureUnsignedManifests := True;
   Engine := TUpdateEngine.Create(Config);
   FSecurityWarnings := TStringList.Create;
   try
     Engine.OnSecurityWarning := HandleSecurityWarning;
     Assert.AreEqual(2, FSecurityWarnings.Count);
-    Assert.IsTrue(Pos('ManifestPublicKey', FSecurityWarnings[0]) > 0);
-    Assert.IsTrue(Pos('ignored', FSecurityWarnings[1]) > 0);
+    Assert.IsTrue(Pos('unsigned', FSecurityWarnings[0]) > 0);
+    Assert.IsTrue(Pos('ManifestPublicKey', FSecurityWarnings[1]) > 0);
   finally
     FSecurityWarnings.Free;
     FSecurityWarnings := nil;
@@ -1632,14 +1633,14 @@ begin
   end;
 end;
 
-procedure TVittixAutoUpdaterTests.RequireSecureConfigBlocksUnsignedChecks;
+procedure TVittixAutoUpdaterTests.EngineRejectsUnsignedChecksWithoutOptIn;
 var
   Config: TUpdaterConfig;
   Engine: TUpdateEngine;
   CallbackResult: TUpdateCheckResult;
 begin
   Config := TUpdaterConfig.Default;
-  Config.RequireSecureConfig := True;
+  Config.VerifyManifestSignature := False;
   Engine := TUpdateEngine.Create(Config);
   try
     CallbackResult := ucrUpdateAvailable;
