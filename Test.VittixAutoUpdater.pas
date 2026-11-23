@@ -52,6 +52,7 @@ type
     [Test] procedure ArchiveLimitsHaveSecureDefaults;
 {$IFDEF VITTIX_TEST_LOOPBACK}
     [Test] procedure ZipExtractionAcceptsSafeAndRejectsTraversalArchives;
+    [Test] procedure ZipExtractionRejectsPathConflictsInBothOrders;
     [Test] procedure ZipPreflightRejectsMalformedAndAmbiguousArchives;
     [Test] procedure ZipResourceLimitsEnforceBoundaries;
     [Test] procedure ZipExtractionRejectsReparsePointAncestorBeforeWrites;
@@ -1237,6 +1238,48 @@ begin
     Engine.Free;
   end;
   TDirectory.Delete(TempRoot, True);
+end;
+
+procedure TVittixAutoUpdaterTests.ZipExtractionRejectsPathConflictsInBothOrders;
+var
+  Root, ArchiveName, Destination: string;
+  Engine: TUpdateEngine;
+  Payload: TBytes;
+
+  procedure AssertConflict(const First, Second: string);
+  var
+    Zip: TZipFile;
+  begin
+    Zip := TZipFile.Create;
+    try
+      Zip.Open(ArchiveName, zmWrite);
+      Zip.Add(Payload, First, zcStored);
+      Zip.Add(Payload, Second, zcStored);
+      Zip.Close;
+    finally
+      Zip.Free;
+    end;
+    Assert.IsFalse(Engine.ExtractArchiveForTests(ArchiveName, Destination),
+      First + ' conflicts with ' + Second);
+    Assert.IsFalse(TDirectory.Exists(Destination));
+    TFile.Delete(ArchiveName);
+  end;
+
+begin
+  Root := TPath.Combine(TPath.GetTempPath, TPath.GetRandomFileName);
+  TDirectory.CreateDirectory(Root);
+  Engine := TUpdateEngine.Create(TUpdaterConfig.Default);
+  try
+    ArchiveName := TPath.Combine(Root, 'conflict.zip');
+    Destination := TPath.Combine(Root, 'payload');
+    Payload := TEncoding.ASCII.GetBytes('entry');
+    AssertConflict('dir', 'DIR/file.txt');
+    AssertConflict('DIR/file.txt', 'dir');
+    AssertConflict(#$00E5 + '.txt', #$00C5 + '.TXT');
+  finally
+    Engine.Free;
+    TDirectory.Delete(Root, True);
+  end;
 end;
 
 procedure TVittixAutoUpdaterTests.ZipPreflightRejectsMalformedAndAmbiguousArchives;

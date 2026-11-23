@@ -175,7 +175,7 @@ uses
 {$IFDEF MSWINDOWS}
   Windows, ShellAPI, Forms, System.Hash, System.Win.Registry,
 {$ENDIF}
-  System.Zip, System.IOUtils, System.Types, System.StrUtils,
+  System.Zip, System.IOUtils, System.Types, System.StrUtils, System.Generics.Defaults,
   VittixAutoUpdater.Staging;
 
 type
@@ -1619,8 +1619,15 @@ begin
     NotifyState(usReady, 'Update ready to install');
 end;
 
+function RtlUpcaseUnicodeChar(SourceCharacter: WideChar): WideChar; stdcall;
+  external 'ntdll.dll' name 'RtlUpcaseUnicodeChar';
+
 function TUpdateEngine.ExtractUpdate(
   const ZipFile, DestPath: string): Boolean;
+const
+  FileEntry = 'F';
+  ExplicitDirectory = 'D';
+  ImplicitDirectory = 'I';
 type
   TPlannedEntry = record
     Name: string;
@@ -1633,7 +1640,7 @@ var
   ZipArchive: TZipFile;
   ZipCancellationObserver: TZipCancellationObserver;
   Entries: TArray<TPlannedEntry>;
-  EntryName, EntryPath, ParentPath, Key, CurrentKey, ExistingKind: string;
+  EntryName, EntryPath, ParentPath, CurrentKey, ExistingKind: string;
   I, J, Depth: Integer;
   PreflightCount: Integer;
   Header: TZipHeader;
@@ -1647,21 +1654,6 @@ var
   Attr: DWORD;
   UnixMode: UInt32;
   AvailableBytes, TotalBytes, TotalFreeBytes: UInt64;
-
-  function FindPathKind(const Candidate: string; out Kind: string): Boolean;
-  var
-    MapKey: string;
-  begin
-    Result := False;
-    for MapKey in Paths.Keys do
-      if (Length(MapKey) = Length(Candidate)) and
-         (CompareStringOrdinal(PChar(MapKey), Length(MapKey),
-           PChar(Candidate), Length(Candidate), 1) = CSTR_EQUAL) then
-      begin
-        Result := Paths.TryGetValue(MapKey, Kind);
-        Exit;
-      end;
-  end;
 
   procedure EnsureSafeDirectories(const Root, Target: string);
   var
@@ -1719,228 +1711,238 @@ var
 
 begin
   Result := False;
-  Paths := TDictionary<string, string>.Create;
-  ZipCancellationObserver := TZipCancellationObserver.Create(Self);
+  Paths := nil;
+  ZipCancellationObserver := nil;
   try
-    if CancelRequested then
-      raise EAbort.Create('ZIP extraction cancelled');
-    ZipArchive := TZipFile.Create;
     try
-      if not TFile.Exists(ZipFile) then
-        raise EFileSystemException.Create('ZIP package does not exist');
-      ArchiveBytes := TFile.GetSize(ZipFile);
-      if (FConfig.MaxArchiveBytes <= 0) or
-         (ArchiveBytes > UInt64(FConfig.MaxArchiveBytes)) then
-        raise EFileSystemException.Create('ZIP archive exceeds the configured size limit');
-      PreflightZipArchive(ZipFile, FConfig.MaxArchiveBytes,
-        FConfig.MaxArchiveEntryCount, PreflightCount);
-      ZipArchive.Open(ZipFile, zmRead);
-      ZipArchive.OnProgress := ZipCancellationObserver.OnProgress;
-      if ZipArchive.FileCount <> PreflightCount then
-        raise EFileSystemException.Create('ZIP entry count changed after preflight');
-      if ZipArchive.FileCount = 0 then
-        raise EFileSystemException.Create('Empty ZIP archives are not valid updates');
-      if (FConfig.MaxArchiveTotalUncompressedBytes <= 0) or
-         (FConfig.MaxArchiveSingleEntryBytes <= 0) or
-         (FConfig.MaxArchivePathDepth <= 0) or
-         (FConfig.MaxArchivePathLength <= 0) or
-         (FConfig.MaxArchiveExpansionRatio <= 0) then
-        raise EFileSystemException.Create('ZIP extraction limits are invalid');
-
-      SetLength(Entries, ZipArchive.FileCount);
-      DeclaredTotal := 0;
-      // Validate the complete central directory before creating any payload.
-      for I := 0 to ZipArchive.FileCount - 1 do
-      begin
-        if CancelRequested then
-          raise EAbort.Create('ZIP extraction cancelled');
-        EntryName := ZipArchive.FileNames[I];
-        if not IsSafeZipEntryPath(DestPath, EntryName, EntryPath) then
-          raise EFileSystemException.CreateFmt(
-            'Unsafe ZIP entry path rejected: "%s"', [EntryName]);
-        Header := ZipArchive.FileInfo[I];
-        if Header.IsEncrypted then
-          raise EFileSystemException.Create('Encrypted ZIP entries are unsupported');
-        if not (Header.CompressionMethod in [0, 8]) then
-          raise EFileSystemException.Create('Unsupported ZIP compression method');
-        IsDirectory := (EntryName[Length(EntryName)] = '/') or
-          (EntryName[Length(EntryName)] = '\');
-        if (TFileAttribute.faSymLink in Header.FileAttributes) or
-           (TFileAttribute.faDevice in Header.FileAttributes) or
-           ((Header.ExternalAttributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) then
-          raise EFileSystemException.Create('ZIP links and reparse-point attributes are unsupported');
-        if ((Header.MadeByVersion shr 8) = 0) and
-           ((TFileAttribute.faDirectory in Header.FileAttributes) <> IsDirectory) then
-          raise EFileSystemException.Create('ZIP directory metadata does not match its entry name');
-        if (Header.MadeByVersion shr 8) = 3 then
-        begin
-          UnixMode := (Header.ExternalAttributes shr 16) and $F000;
-          if not ((UnixMode = 0) or (UnixMode = $8000) or (UnixMode = $4000)) or
-             ((UnixMode = $4000) and not IsDirectory) or
-             ((UnixMode = $8000) and IsDirectory) then
-            raise EFileSystemException.Create('Unsupported ZIP Unix entry type');
-        end;
-        if IsDirectory and
-           ((Header.UncompressedSize64 <> 0) or (Header.CompressedSize64 <> 0)) then
-          raise EFileSystemException.Create('ZIP directory entries must not contain data');
-        if (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveSingleEntryBytes)) or
-           (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - DeclaredTotal) then
-          raise EFileSystemException.Create('ZIP uncompressed size limit exceeded');
-        Inc(DeclaredTotal, Header.UncompressedSize64);
-        if (Header.UncompressedSize64 > 0) and
-           ((Header.CompressedSize64 = 0) or
-            (((Header.UncompressedSize64 - 1) div Header.CompressedSize64) + 1 >
-             UInt64(FConfig.MaxArchiveExpansionRatio))) then
-          raise EFileSystemException.Create('ZIP expansion ratio limit exceeded');
-
-        Depth := 1;
-        for J := 1 to Length(EntryName) do
-          if EntryName[J] in ['/', '\'] then
-            Inc(Depth);
-        if IsDirectory then
-          Dec(Depth);
-        if (Depth > FConfig.MaxArchivePathDepth) or
-           ((Length(EntryName) - Ord(IsDirectory)) > FConfig.MaxArchivePathLength) then
-          raise EFileSystemException.Create('ZIP entry path exceeds configured limits');
-        CurrentKey := StringReplace(EntryName, '/', '\', [rfReplaceAll]);
-        if (CurrentKey <> '') and (CurrentKey[Length(CurrentKey)] = '\') then
-          Delete(CurrentKey, Length(CurrentKey), 1);
-        if FindPathKind(CurrentKey, ExistingKind) then
-          raise EFileSystemException.CreateFmt('Duplicate ZIP destination: "%s"', [EntryName]);
-        Paths.Add(CurrentKey, IfThen(IsDirectory, 'D', 'F'));
-        ParentPath := ExtractFileDir(StringReplace(CurrentKey, '\', PathDelim, [rfReplaceAll]));
-        while (ParentPath <> '.') and (ParentPath <> '') do
-        begin
-          if FindPathKind(StringReplace(ParentPath, PathDelim, '\', [rfReplaceAll]), ExistingKind) and
-             (ExistingKind = 'F') then
-            raise EFileSystemException.Create('ZIP file entry conflicts with a parent directory');
-          ParentPath := ExtractFileDir(ParentPath);
-        end;
-        if not IsDirectory then
-          for Key in Paths.Keys do
-            if (Length(Key) > Length(CurrentKey)) and
-               (Key[Length(CurrentKey) + 1] = '\') and
-               (CompareStringOrdinal(PChar(Copy(Key, 1, Length(CurrentKey))),
-                 Length(CurrentKey), PChar(CurrentKey), Length(CurrentKey), 1) = CSTR_EQUAL) then
-              raise EFileSystemException.Create('ZIP file entry conflicts with child entries');
-        Entries[I].Name := EntryName;
-        Entries[I].Path := EntryPath;
-        Entries[I].IsDirectory := IsDirectory;
-        Entries[I].Size := Header.UncompressedSize64;
-        Entries[I].CompressedSize := Header.CompressedSize64;
-      end;
-
-      {$IFDEF MSWINDOWS}
+      Paths := TDictionary<string, string>.Create(TIStringComparer.Ordinal);
+      ZipCancellationObserver := TZipCancellationObserver.Create(Self);
       if CancelRequested then
         raise EAbort.Create('ZIP extraction cancelled');
-      if not IsPathWithoutReparsePoints(ExtractFileDir(DestPath)) then
-        raise EFileSystemException.Create(
-          'Extraction parent contains a missing or redirected path component');
-      if not GetDiskFreeSpaceEx(PChar(ExtractFileDir(DestPath)),
-        @AvailableBytes, @TotalBytes, @TotalFreeBytes) or
-         (AvailableBytes < DeclaredTotal) then
-        raise EFileSystemException.Create('Insufficient disk space for ZIP extraction');
-      if not CreatePrivateUpdateDirectory(DestPath) then
-        raise EFileSystemException.CreateFmt(
-          'Could not create private update directory "%s" (Windows error %d)',
-          [DestPath, GetLastError]);
-      if not IsPathWithoutReparsePoints(DestPath) then
-        raise EFileSystemException.Create('Extraction root contains a reparse point');
-      {$ELSE}
-      TDirectory.CreateDirectory(DestPath);
-      {$ENDIF}
-      TotalUncompressed := 0;
-      for I := 0 to High(Entries) do
-      begin
-        if CancelRequested then
-          raise EAbort.Create('ZIP extraction cancelled');
-        EntryPath := Entries[I].Path;
-        ParentPath := ExtractFileDir(EntryPath);
-        if not Entries[I].IsDirectory then
+      ZipArchive := TZipFile.Create;
+      try
+        if not TFile.Exists(ZipFile) then
+          raise EFileSystemException.Create('ZIP package does not exist');
+        ArchiveBytes := TFile.GetSize(ZipFile);
+        if (FConfig.MaxArchiveBytes <= 0) or
+           (ArchiveBytes > UInt64(FConfig.MaxArchiveBytes)) then
+          raise EFileSystemException.Create('ZIP archive exceeds the configured size limit');
+        PreflightZipArchive(ZipFile, FConfig.MaxArchiveBytes,
+          FConfig.MaxArchiveEntryCount, PreflightCount);
+        ZipArchive.Open(ZipFile, zmRead);
+        ZipArchive.OnProgress := ZipCancellationObserver.OnProgress;
+        if ZipArchive.FileCount <> PreflightCount then
+          raise EFileSystemException.Create('ZIP entry count changed after preflight');
+        if ZipArchive.FileCount = 0 then
+          raise EFileSystemException.Create('Empty ZIP archives are not valid updates');
+        if (FConfig.MaxArchiveTotalUncompressedBytes <= 0) or
+           (FConfig.MaxArchiveSingleEntryBytes <= 0) or
+           (FConfig.MaxArchivePathDepth <= 0) or
+           (FConfig.MaxArchivePathLength <= 0) or
+           (FConfig.MaxArchiveExpansionRatio <= 0) then
+          raise EFileSystemException.Create('ZIP extraction limits are invalid');
+
+        SetLength(Entries, ZipArchive.FileCount);
+        DeclaredTotal := 0;
+        // Validate the complete central directory before creating any payload.
+        for I := 0 to ZipArchive.FileCount - 1 do
         begin
-          // Create missing parents one component at a time and reject any
-          // reparse-point path observed before and after creation.
-          EnsureSafeDirectories(DestPath, ParentPath);
-{$IFDEF VITTIX_TEST_LOOPBACK}
-          if Assigned(FOnZipBeforeCreateForTests) then
-            FOnZipBeforeCreateForTests(Self);
-{$ENDIF}
-          // Recheck immediately before opening the destination. This narrows
-          // the path-based race window; it does not eliminate same-identity
-          // replacement after this check.
-          if not IsPathWithoutReparsePoints(DestPath) or
-             not IsPathWithoutReparsePoints(ParentPath) then
-            raise EFileSystemException.Create(
-              'Extraction path changed or contains a reparse point');
-          OutputHandle := CreateFile(PChar(EntryPath), GENERIC_WRITE, 0, nil,
-            CREATE_NEW, FILE_ATTRIBUTE_NORMAL or FILE_FLAG_OPEN_REPARSE_POINT, 0);
-          if OutputHandle = INVALID_HANDLE_VALUE then
-            RaiseLastOSError;
-          InputStream := nil;
-          ActualEntryBytes := 0;
-          try
-            ZipArchive.Read(I, InputStream, Header, True);
-            repeat
-              if CancelRequested then
-                raise EAbort.Create('ZIP extraction cancelled');
-              BytesRead := InputStream.Read(Buffer, SizeOf(Buffer));
-              if BytesRead = 0 then
-                Break;
-{$IFDEF VITTIX_TEST_LOOPBACK}
-              if Assigned(FOnZipOutputForTests) then
-                FOnZipOutputForTests(Self);
-{$ENDIF}
-              if CancelRequested then
-                raise EAbort.Create('ZIP extraction cancelled');
-              if (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveSingleEntryBytes) - ActualEntryBytes) or
-                 (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - TotalUncompressed) then
-                raise EFileSystemException.Create('ZIP streamed output limit exceeded');
-              Inc(ActualEntryBytes, BytesRead);
-              Inc(TotalUncompressed, BytesRead);
-              if not WriteFile(OutputHandle, Buffer, BytesRead, Written, nil) or
-                 (Written <> BytesRead) then
-                RaiseLastOSError;
-            until False;
-            if ActualEntryBytes <> Entries[I].Size then
-              raise EFileSystemException.Create('ZIP entry size did not match its header');
-          finally
-            InputStream.Free;
-            CloseHandle(OutputHandle);
+          if CancelRequested then
+            raise EAbort.Create('ZIP extraction cancelled');
+          EntryName := ZipArchive.FileNames[I];
+          if not IsSafeZipEntryPath(DestPath, EntryName, EntryPath) then
+            raise EFileSystemException.CreateFmt(
+              'Unsafe ZIP entry path rejected: "%s"', [EntryName]);
+          Header := ZipArchive.FileInfo[I];
+          if Header.IsEncrypted then
+            raise EFileSystemException.Create('Encrypted ZIP entries are unsupported');
+          if not (Header.CompressionMethod in [0, 8]) then
+            raise EFileSystemException.Create('Unsupported ZIP compression method');
+          IsDirectory := (EntryName[Length(EntryName)] = '/') or
+            (EntryName[Length(EntryName)] = '\');
+          if (TFileAttribute.faSymLink in Header.FileAttributes) or
+             (TFileAttribute.faDevice in Header.FileAttributes) or
+             ((Header.ExternalAttributes and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) then
+            raise EFileSystemException.Create('ZIP links and reparse-point attributes are unsupported');
+          if ((Header.MadeByVersion shr 8) = 0) and
+             ((TFileAttribute.faDirectory in Header.FileAttributes) <> IsDirectory) then
+            raise EFileSystemException.Create('ZIP directory metadata does not match its entry name');
+          if (Header.MadeByVersion shr 8) = 3 then
+          begin
+            UnixMode := (Header.ExternalAttributes shr 16) and $F000;
+            if not ((UnixMode = 0) or (UnixMode = $8000) or (UnixMode = $4000)) or
+               ((UnixMode = $4000) and not IsDirectory) or
+               ((UnixMode = $8000) and IsDirectory) then
+              raise EFileSystemException.Create('Unsupported ZIP Unix entry type');
           end;
-        end
-        else
-        begin
-          EnsureSafeDirectories(DestPath, EntryPath);
-          Attr := GetFileAttributes(PChar(EntryPath));
-          if (Attr = INVALID_FILE_ATTRIBUTES) or ((Attr and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) or
-             ((Attr and FILE_ATTRIBUTE_DIRECTORY) = 0) then
-            raise EFileSystemException.Create('Unsafe ZIP directory destination');
-        end;
-{$IFDEF VITTIX_TEST_LOOPBACK}
-        if Assigned(FOnZipEntryCompleteForTests) then
-          FOnZipEntryCompleteForTests(Self);
-{$ENDIF}
-      end;
-{$IFDEF VITTIX_TEST_LOOPBACK}
-      if Assigned(FOnZipBeforeCompleteForTests) then
-        FOnZipBeforeCompleteForTests(Self);
-{$ENDIF}
-      if CancelRequested then
-        raise EAbort.Create('ZIP extraction cancelled');
-      Result := True;
-    finally
-      ZipArchive.Free;
-    end;
+          if IsDirectory and
+             ((Header.UncompressedSize64 <> 0) or (Header.CompressedSize64 <> 0)) then
+            raise EFileSystemException.Create('ZIP directory entries must not contain data');
+          if (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveSingleEntryBytes)) or
+             (Header.UncompressedSize64 > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - DeclaredTotal) then
+            raise EFileSystemException.Create('ZIP uncompressed size limit exceeded');
+          Inc(DeclaredTotal, Header.UncompressedSize64);
+          if (Header.UncompressedSize64 > 0) and
+             ((Header.CompressedSize64 = 0) or
+              (((Header.UncompressedSize64 - 1) div Header.CompressedSize64) + 1 >
+               UInt64(FConfig.MaxArchiveExpansionRatio))) then
+            raise EFileSystemException.Create('ZIP expansion ratio limit exceeded');
 
-  except
-    on E: Exception do
-    begin
-      SetState(usFailed, 'Extraction failed: ' + E.Message);
-      Result := False;
+          Depth := 1;
+          for J := 1 to Length(EntryName) do
+            if EntryName[J] in ['/', '\'] then
+              Inc(Depth);
+          if IsDirectory then
+            Dec(Depth);
+          if (Depth > FConfig.MaxArchivePathDepth) or
+             ((Length(EntryName) - Ord(IsDirectory)) > FConfig.MaxArchivePathLength) then
+            raise EFileSystemException.Create('ZIP entry path exceeds configured limits');
+          CurrentKey := StringReplace(EntryName, '/', '\', [rfReplaceAll]);
+          if (CurrentKey <> '') and (CurrentKey[Length(CurrentKey)] = '\') then
+            Delete(CurrentKey, Length(CurrentKey), 1);
+          // Match Windows ordinal casing for non-ASCII names as well as ASCII.
+          for J := 1 to Length(CurrentKey) do
+            if Ord(CurrentKey[J]) > 127 then
+              CurrentKey[J] := RtlUpcaseUnicodeChar(CurrentKey[J]);
+
+          if Paths.TryGetValue(CurrentKey, ExistingKind) then
+          begin
+            if ExistingKind <> ImplicitDirectory then
+              raise EFileSystemException.CreateFmt('Duplicate ZIP destination: "%s"', [EntryName]);
+            if not IsDirectory then
+              raise EFileSystemException.Create('ZIP file entry conflicts with child entries');
+          end;
+          Paths.AddOrSetValue(CurrentKey, IfThen(IsDirectory, ExplicitDirectory, FileEntry));
+
+          ParentPath := ExtractFileDir(CurrentKey);
+          while (ParentPath <> '.') and (ParentPath <> '') do
+          begin
+            if not Paths.TryGetValue(ParentPath, ExistingKind) then
+              Paths.Add(ParentPath, ImplicitDirectory)
+            else if ExistingKind = FileEntry then
+              raise EFileSystemException.Create('ZIP file entry conflicts with a parent directory');
+            ParentPath := ExtractFileDir(ParentPath);
+          end;
+          Entries[I].Name := EntryName;
+          Entries[I].Path := EntryPath;
+          Entries[I].IsDirectory := IsDirectory;
+          Entries[I].Size := Header.UncompressedSize64;
+          Entries[I].CompressedSize := Header.CompressedSize64;
+        end;
+
+        {$IFDEF MSWINDOWS}
+        if CancelRequested then
+          raise EAbort.Create('ZIP extraction cancelled');
+        if not IsPathWithoutReparsePoints(ExtractFileDir(DestPath)) then
+          raise EFileSystemException.Create(
+            'Extraction parent contains a missing or redirected path component');
+        if not GetDiskFreeSpaceEx(PChar(ExtractFileDir(DestPath)),
+          @AvailableBytes, @TotalBytes, @TotalFreeBytes) or
+           (AvailableBytes < DeclaredTotal) then
+          raise EFileSystemException.Create('Insufficient disk space for ZIP extraction');
+        if not CreatePrivateUpdateDirectory(DestPath) then
+          raise EFileSystemException.CreateFmt(
+            'Could not create private update directory "%s" (Windows error %d)',
+            [DestPath, GetLastError]);
+        if not IsPathWithoutReparsePoints(DestPath) then
+          raise EFileSystemException.Create('Extraction root contains a reparse point');
+        {$ELSE}
+        TDirectory.CreateDirectory(DestPath);
+        {$ENDIF}
+        TotalUncompressed := 0;
+        for I := 0 to High(Entries) do
+        begin
+          if CancelRequested then
+            raise EAbort.Create('ZIP extraction cancelled');
+          EntryPath := Entries[I].Path;
+          ParentPath := ExtractFileDir(EntryPath);
+          if not Entries[I].IsDirectory then
+          begin
+            // Create missing parents one component at a time and reject any
+            // reparse-point path observed before and after creation.
+            EnsureSafeDirectories(DestPath, ParentPath);
+  {$IFDEF VITTIX_TEST_LOOPBACK}
+            if Assigned(FOnZipBeforeCreateForTests) then
+              FOnZipBeforeCreateForTests(Self);
+  {$ENDIF}
+            // Recheck immediately before opening the destination. This narrows
+            // the path-based race window; it does not eliminate same-identity
+            // replacement after this check.
+            if not IsPathWithoutReparsePoints(DestPath) or
+               not IsPathWithoutReparsePoints(ParentPath) then
+              raise EFileSystemException.Create(
+                'Extraction path changed or contains a reparse point');
+            OutputHandle := CreateFile(PChar(EntryPath), GENERIC_WRITE, 0, nil,
+              CREATE_NEW, FILE_ATTRIBUTE_NORMAL or FILE_FLAG_OPEN_REPARSE_POINT, 0);
+            if OutputHandle = INVALID_HANDLE_VALUE then
+              RaiseLastOSError;
+            InputStream := nil;
+            ActualEntryBytes := 0;
+            try
+              ZipArchive.Read(I, InputStream, Header, True);
+              repeat
+                if CancelRequested then
+                  raise EAbort.Create('ZIP extraction cancelled');
+                BytesRead := InputStream.Read(Buffer, SizeOf(Buffer));
+                if BytesRead = 0 then
+                  Break;
+  {$IFDEF VITTIX_TEST_LOOPBACK}
+                if Assigned(FOnZipOutputForTests) then
+                  FOnZipOutputForTests(Self);
+  {$ENDIF}
+                if CancelRequested then
+                  raise EAbort.Create('ZIP extraction cancelled');
+                if (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveSingleEntryBytes) - ActualEntryBytes) or
+                   (UInt64(BytesRead) > UInt64(FConfig.MaxArchiveTotalUncompressedBytes) - TotalUncompressed) then
+                  raise EFileSystemException.Create('ZIP streamed output limit exceeded');
+                Inc(ActualEntryBytes, BytesRead);
+                Inc(TotalUncompressed, BytesRead);
+                if not WriteFile(OutputHandle, Buffer, BytesRead, Written, nil) or
+                   (Written <> BytesRead) then
+                  RaiseLastOSError;
+              until False;
+              if ActualEntryBytes <> Entries[I].Size then
+                raise EFileSystemException.Create('ZIP entry size did not match its header');
+            finally
+              InputStream.Free;
+              CloseHandle(OutputHandle);
+            end;
+          end
+          else
+          begin
+            EnsureSafeDirectories(DestPath, EntryPath);
+            Attr := GetFileAttributes(PChar(EntryPath));
+            if (Attr = INVALID_FILE_ATTRIBUTES) or ((Attr and FILE_ATTRIBUTE_REPARSE_POINT) <> 0) or
+               ((Attr and FILE_ATTRIBUTE_DIRECTORY) = 0) then
+              raise EFileSystemException.Create('Unsafe ZIP directory destination');
+          end;
+  {$IFDEF VITTIX_TEST_LOOPBACK}
+          if Assigned(FOnZipEntryCompleteForTests) then
+            FOnZipEntryCompleteForTests(Self);
+  {$ENDIF}
+        end;
+  {$IFDEF VITTIX_TEST_LOOPBACK}
+        if Assigned(FOnZipBeforeCompleteForTests) then
+          FOnZipBeforeCompleteForTests(Self);
+  {$ENDIF}
+        if CancelRequested then
+          raise EAbort.Create('ZIP extraction cancelled');
+        Result := True;
+      finally
+        ZipArchive.Free;
+      end;
+
+    except
+      on E: Exception do
+      begin
+        SetState(usFailed, 'Extraction failed: ' + E.Message);
+        Result := False;
+      end;
     end;
+  finally
+    ZipCancellationObserver.Free;
+    Paths.Free;
   end;
-  Paths.Free;
-  ZipCancellationObserver.Free;
 end;
 
 function TUpdateEngine.IsSafeToApply: Boolean;
