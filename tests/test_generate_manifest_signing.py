@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -58,7 +59,7 @@ def test_manifest_generator_writes_utf8_lf(tmp_path):
     assert "café" in raw.decode("utf-8")
 
 
-def test_generator_signs_exact_file_bytes_with_v1_envelope(tmp_path):
+def test_generator_signs_exact_file_bytes_with_v1_envelope(tmp_path, monkeypatch):
     private_key = ec.generate_private_key(ec.SECP256R1())
     private_path = tmp_path / "disposable-test-key.pem"
     private_path.write_bytes(
@@ -72,7 +73,11 @@ def test_generator_signs_exact_file_bytes_with_v1_envelope(tmp_path):
     manifest_bytes = b'{"Demo":{"version":"1.2.3.4","checksum":"sha256:abc"}}\n'
     manifest_path.write_bytes(manifest_bytes)
 
-    generator.sign_manifest_file(str(manifest_path), str(private_path))
+    monkeypatch.setattr(sys, "argv", [
+        str(SCRIPT), "--signing-key", str(private_path), "--sign-existing", str(manifest_path)
+    ])
+    generator.main()
+    assert manifest_path.read_bytes() == manifest_bytes
 
     envelope = (tmp_path / "manifest.json.sig").read_text("ascii").strip()
     prefix, key_id, signature_text = envelope.split(":", 2)

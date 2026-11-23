@@ -2,7 +2,7 @@ object ManifestGeneratorForm: TManifestGeneratorForm
   Left = 0
   Top = 0
   Caption = 'Vittix Manifest Generator'
-  ClientHeight = 534
+  ClientHeight = 572
   ClientWidth = 760
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -12,6 +12,7 @@ object ManifestGeneratorForm: TManifestGeneratorForm
   Font.Style = []
   OldCreateOrder = True
   Position = poScreenCenter
+  OnCreate = FormCreate
   PixelsPerInch = 96
   TextHeight = 13
   object PanelTop: TPanel
@@ -49,7 +50,7 @@ object ManifestGeneratorForm: TManifestGeneratorForm
     Left = 8
     Top = 64
     Width = 744
-    Height = 140
+    Height = 150
     Caption = 'Application Information'
     TabOrder = 1
     object Label2: TLabel
@@ -112,26 +113,41 @@ object ManifestGeneratorForm: TManifestGeneratorForm
       TabOrder = 3
       Text = '1.0.0.0'
     end
+    object LabelIssuedAt: TLabel
+      Left = 368
+      Top = 124
+      Width = 86
+      Height = 13
+      Caption = 'Issued at (UTC)'
+      FocusControl = EditIssuedAt
+    end
+    object EditIssuedAt: TEdit
+      Left = 464
+      Top = 120
+      Width = 256
+      Height = 21
+      TabOrder = 4
+    end
   end
   object GroupBox2: TGroupBox
     Left = 8
-    Top = 208
+    Top = 218
     Width = 520
-    Height = 220
+    Height = 212
     Caption = 'Release Notes'
     TabOrder = 2
     object MemoNotes: TRichEdit
       Left = 8
       Top = 24
       Width = 504
-      Height = 188
+      Height = 180
       ScrollBars = ssVertical
       TabOrder = 0
     end
   end
   object GroupBox3: TGroupBox
     Left = 536
-    Top = 208
+    Top = 218
     Width = 216
     Height = 120
     Caption = 'Severity'
@@ -147,12 +163,11 @@ object ManifestGeneratorForm: TManifestGeneratorForm
   end
   object PanelBottom: TPanel
     Left = 0
-    Top = 426
+    Top = 434
     Width = 760
-    Height = 108
+    Height = 138
     Align = alBottom
     TabOrder = 4
-    ExplicitTop = 447
     object BtnGenerate: TButton
       Left = 580
       Top = 12
@@ -176,15 +191,41 @@ object ManifestGeneratorForm: TManifestGeneratorForm
       Top = 68
       Width = 160
       Height = 25
-      Caption = 'Validate manifest.json'
+      Caption = 'Validate draft'
       TabOrder = 3
       OnClick = BtnValidateClick
     end
+    object BtnValidateSaved: TButton
+      Left = 580
+      Top = 96
+      Width = 160
+      Height = 25
+      Caption = 'Validate saved manifest...'
+      TabOrder = 4
+      OnClick = BtnValidateSavedClick
+    end
+    object BtnCopySigningCommand: TButton
+      Left = 16
+      Top = 92
+      Width = 162
+      Height = 25
+      Caption = 'Copy signing command'
+      Enabled = False
+      TabOrder = 5
+      OnClick = BtnCopySigningCommandClick
+    end
+    object LabelSigning: TLabel
+      Left = 16
+      Top = 66
+      Width = 540
+      Height = 16
+      Caption = 'Sign the saved manifest in PowerShell with the copied command before publishing.'
+    end
     object PanelStatus: TPanel
       Left = 16
-      Top = 22
+      Top = 12
       Width = 540
-      Height = 36
+      Height = 44
       BevelOuter = bvNone
       TabOrder = 0
       object LabelStatusIcon: TLabel
@@ -203,9 +244,11 @@ object ManifestGeneratorForm: TManifestGeneratorForm
       object LabelStatusText: TLabel
         Left = 59
         Top = 10
-        Width = 69
-        Height = 13
+        Width = 470
+        Height = 32
+        AutoSize = False
         Caption = 'Not validated'
+        WordWrap = True
       end
     end
   end

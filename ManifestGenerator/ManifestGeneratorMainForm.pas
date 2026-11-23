@@ -1,4 +1,4 @@
-﻿unit ManifestGeneratorMainForm;
+unit ManifestGeneratorMainForm;
 
 interface
 
@@ -6,7 +6,7 @@ uses
   Winapi.Windows, Winapi.Messages,
   System.SysUtils, System.Classes, System.Hash, System.JSON, System.IOUtils,
   Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.Dialogs, Vcl.ComCtrls, Vcl.Graphics,
-  Vcl.Controls;
+  Vcl.Controls, Vcl.Clipbrd, System.DateUtils;
 
 type
   TManifestGeneratorForm = class(TForm)
@@ -24,6 +24,8 @@ type
     EditDownloadUrl: TEdit;
     Label5: TLabel;
     EditMinVersion: TEdit;
+    LabelIssuedAt: TLabel;
+    EditIssuedAt: TEdit;
 
     GroupBox2: TGroupBox;
     MemoNotes: TRichEdit;
@@ -35,6 +37,9 @@ type
     BtnGenerate: TButton;
     BtnSaveManifest: TButton;
     BtnValidate: TButton;
+    BtnValidateSaved: TButton;
+    BtnCopySigningCommand: TButton;
+    LabelSigning: TLabel;
     SaveDialog1: TSaveDialog;
 
     OpenDialog1: TOpenDialog;
@@ -47,22 +52,22 @@ type
     procedure BtnGenerateClick(Sender: TObject);
     procedure BtnSaveManifestClick(Sender: TObject);
     procedure BtnValidateClick(Sender: TObject);
+    procedure BtnValidateSavedClick(Sender: TObject);
+    procedure BtnCopySigningCommandClick(Sender: TObject);
     procedure AnyFieldChanged(Sender: TObject);
 
   private
     FChecksum: string;
     FFileSize: Int64;
     FLastValidationOK: Boolean;
+    FSigningManifestPath: string;
 
     function IsValidUrl(const Url: string): Boolean;
-    function ValidateManifest(const JsonText: string): string;
+    function ValidateManifest(const JsonText, ManifestPath: string; out Msg: string): Boolean;
     function CalcSHA256(AStream: TStream): string; overload;
     function CalcSHA256(const AFileName: string): string; overload;
     procedure ReadFileInfo(const FileName: string);
     function BuildManifestJSON: string;
-    function ExtractChecksumFromManifest(const JsonText: string): string;
-    function ExtractFileSizeFromManifest(const JsonText: string): Int64;
-    procedure AddColoredLine(const Text: string; Color: TColor);
     procedure SetStatusPanel(const Msg: string; OK: Boolean);
   end;
 
@@ -73,6 +78,9 @@ implementation
 
 {$R *.dfm}
 
+const
+  UtcTimestampFormat = 'yyyy"-"mm"-"dd"T"hh":"nn":"ss"Z"';
+
 procedure TManifestGeneratorForm.FormCreate(Sender: TObject);
 begin
   ComboSeverity.Items.Add('optional');
@@ -82,6 +90,8 @@ begin
 
   EditMinVersion.Text := '1.0.0.0';
   EditVersion.Text := '1.0.0.0';
+  EditIssuedAt.Text := FormatDateTime(UtcTimestampFormat,
+    TTimeZone.Local.ToUniversalTime(Now));
 
   SaveDialog1.Filter := 'JSON files|*.json';
   SaveDialog1.FileName := 'manifest.json';
@@ -93,6 +103,7 @@ begin
   EditVersion.OnChange      := AnyFieldChanged;
   EditDownloadUrl.OnChange  := AnyFieldChanged;
   EditMinVersion.OnChange   := AnyFieldChanged;
+  EditIssuedAt.OnChange     := AnyFieldChanged;
   MemoNotes.OnChange        := AnyFieldChanged;
   ComboSeverity.OnChange    := AnyFieldChanged;
   EditZip.OnChange          := AnyFieldChanged;
@@ -116,56 +127,6 @@ begin
     Result := CalcSHA256(LStream);
   finally
     LStream.Free;
-  end;
-end;
-
-function TManifestGeneratorForm.ExtractChecksumFromManifest(
-  const JsonText: string): string;
-var
-  Root, AppObj: TJSONObject;
-  LChecksumValue: string;
-begin
-  Result := '';
-  try
-    Root := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
-    try
-      AppObj := Root.GetValue(EditAppName.Text) as TJSONObject;
-      if Assigned(AppObj) then
-      begin
-        if AppObj.TryGetValue<string>('checksum', LChecksumValue) then
-          Result := LChecksumValue;
-      end;
-    finally
-      Root.Free;
-    end;
-  except
-    on E: Exception do
-      Result := ''; // Silently fail on parse error
-  end;
-end;
-
-function TManifestGeneratorForm.ExtractFileSizeFromManifest(
-  const JsonText: string): Int64;
-var
-  Root, AppObj: TJSONObject;
-  LFileSizeValue: Int64;
-begin
-  Result := 0;
-  try
-    Root := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
-    try
-      AppObj := Root.GetValue(EditAppName.Text) as TJSONObject;
-      if Assigned(AppObj) then
-      begin
-        if AppObj.TryGetValue<Int64>('file_size', LFileSizeValue) then
-          Result := LFileSizeValue;
-      end;
-    finally
-      Root.Free;
-    end;
-  except
-    on E: Exception do
-      Result := 0; // Silently fail on parse error
   end;
 end;
 
@@ -209,10 +170,11 @@ begin
     AppObj.AddPair('release_notes', MemoNotes.Text);
     AppObj.AddPair('min_version', EditMinVersion.Text);
     AppObj.AddPair('severity', ComboSeverity.Text);
-    AppObj.AddPair(
-      'release_date',
-      DateTimeToStr(Now)
-    );
+    if Trim(EditIssuedAt.Text) <> '' then
+    begin
+      AppObj.AddPair('issued_at', Trim(EditIssuedAt.Text));
+      AppObj.AddPair('release_date', Trim(EditIssuedAt.Text));
+    end;
 
     Root.AddPair(EditAppName.Text, AppObj);
 
@@ -224,154 +186,140 @@ end;
 
 procedure TManifestGeneratorForm.BtnGenerateClick(Sender: TObject);
 begin
-  MemoNotes.Lines.Add('');
-  MemoNotes.Lines.Add('--- MANIFEST PREVIEW ---');
-  MemoNotes.Lines.Add(BuildManifestJSON);
+  ShowMessage(BuildManifestJSON);
 end;
 
 procedure TManifestGeneratorForm.BtnSaveManifestClick(Sender: TObject);
 begin
   if not FLastValidationOK then
   begin
-    ShowMessage('Please validate the manifest first.');
+    ShowMessage('Please validate the draft first.');
     Exit;
   end;
 
   if SaveDialog1.Execute then
   begin
-    TFile.WriteAllText(
-      SaveDialog1.FileName,
-      BuildManifestJSON,
-      TEncoding.UTF8
-    );
-    ShowMessage('manifest.json saved successfully!');
+    TFile.WriteAllBytes(SaveDialog1.FileName,
+      TEncoding.UTF8.GetBytes(BuildManifestJSON));
+    FSigningManifestPath := ExpandFileName(SaveDialog1.FileName);
+    BtnCopySigningCommand.Enabled := True;
+    ShowMessage('Manifest saved. Run the copied signing command before publishing.');
   end;
+end;
+
+procedure TManifestGeneratorForm.BtnCopySigningCommandClick(Sender: TObject);
+begin
+  Clipboard.AsText := 'python generate_manifest.py --signing-key ' +
+    QuotedStr('C:\path\to\private-key.pem') + ' --sign-existing ' +
+    QuotedStr(FSigningManifestPath);
+  ShowMessage('Command copied. Replace the key path and run it in PowerShell from the updater repository.');
 end;
 
 procedure TManifestGeneratorForm.BtnValidateClick(Sender: TObject);
 var
-  JsonText, Msg: string;
+  Msg: string;
+  OK: Boolean;
 begin
-  JsonText := BuildManifestJSON;
-  Msg := ValidateManifest(JsonText);
+  OK := ValidateManifest(BuildManifestJSON, '', Msg);
+  SetStatusPanel(Msg, OK);
+end;
 
-  if Msg.StartsWith('✅') then
-    SetStatusPanel(Msg, True)
-  else
-    SetStatusPanel(Msg, False);
-
-  // Also keep a record in Memo (optional)
-  MemoNotes.Lines.Add('');
-  MemoNotes.Lines.Add('--- VALIDATION RESULT ---');
-  MemoNotes.Lines.Add(Msg);
+procedure TManifestGeneratorForm.BtnValidateSavedClick(Sender: TObject);
+var
+  ManifestPath, Msg: string;
+begin
+  OpenDialog1.Filter := 'JSON files|*.json';
+  if not OpenDialog1.Execute then
+    Exit;
+  ManifestPath := OpenDialog1.FileName;
+  try
+    ValidateManifest(TFile.ReadAllText(ManifestPath, TEncoding.UTF8), ManifestPath, Msg);
+    ShowMessage(Msg);
+  except
+    on E: Exception do
+      ShowMessage('Cannot validate the saved manifest. ' + E.Message);
+  end;
 end;
 
 function TManifestGeneratorForm.IsValidUrl(const Url: string): Boolean;
 begin
-  Result :=
-    Url.StartsWith('http://') or
-    Url.StartsWith('https://');
+  Result := Url.StartsWith('http://') or Url.StartsWith('https://');
 end;
 
-function TManifestGeneratorForm.ValidateManifest(
-  const JsonText: string): string;
+function TManifestGeneratorForm.ValidateManifest(const JsonText,
+  ManifestPath: string; out Msg: string): Boolean;
 var
-  Root, AppObj: TJSONObject;
-  Val: TJSONValue;
-  sValue: string;
-  iValue: Int64;
-  ManifestChecksum: string;
-  ManifestSize: Int64;
-  RealChecksum: string;
-  RealSize: Int64;
-  LStream: TFileStream;
+  Root, AppValue: TJSONValue;
+  AppObj: TJSONObject;
+  Value, ManifestChecksum, RealChecksum: string;
+  ManifestSize, RealSize: Int64;
+  IssuedAt: TDateTime;
+  Stream: TFileStream;
+  Checks: TStringList;
 begin
-  Result := '';
-
+  Result := False;
+  Checks := TStringList.Create;
   try
-    Root := TJSONObject.ParseJSONValue(JsonText) as TJSONObject;
+    if ManifestPath = '' then
+      Checks.Add('Sign the saved draft before publishing.')
+    else if not FileExists(ManifestPath + '.sig') then
+      Checks.Add('Warning. The detached .sig file is missing.');
+
+    Root := TJSONObject.ParseJSONValue(JsonText);
     try
-      if not Assigned(Root) then
-        Exit('❌ Invalid JSON format.');
-
-      Val := Root.GetValue(EditAppName.Text);
-      if not Assigned(Val) then
-        Exit('❌ App name not found in manifest.');
-
-      if not (Val is TJSONObject) then
-        Exit('❌ App node is not a JSON object.');
-
-      AppObj := Val as TJSONObject;
-
-      // ---- Basic field checks ----
-      if not AppObj.TryGetValue<string>('version', sValue) then
-        Exit('❌ Missing: version');
-
-      if not AppObj.TryGetValue<string>('download_url', sValue) then
-        Exit('❌ Missing: download_url');
-
-      if not IsValidUrl(sValue) then
-        Exit('❌ Invalid download_url (must start with http/https)');
-
-      if not AppObj.TryGetValue<Int64>('file_size', iValue) then
-        Exit('❌ Missing or invalid: file_size');
-
-      if not AppObj.TryGetValue<string>('checksum', sValue) then
-        Exit('❌ Missing: checksum');
-
-      if AppObj.TryGetValue<string>('severity', sValue) then
-      begin
-        if not ((sValue = 'optional') or (sValue = 'recommended') or (sValue = 'critical')) then
-          Exit('❌ severity must be: optional / recommended / critical');
-      end;
-
-      // ---- CROSS-CHECK WITH REAL ZIP ----
-      if not FileExists(EditZip.Text) then
-        Exit('⚠ ZIP file not selected — cannot cross-check size/checksum.');
-
-      LStream := TFileStream.Create(EditZip.Text, fmOpenRead or fmShareDenyWrite);
       try
-        RealSize := LStream.Size;
-        RealChecksum := CalcSHA256(LStream);
-      finally
-        LStream.Free;
+        if not (Root is TJSONObject) then
+          raise EConvertError.Create('Invalid JSON object.');
+        AppValue := TJSONObject(Root).GetValue(EditAppName.Text);
+        if not (AppValue is TJSONObject) then
+          raise EConvertError.Create('The selected application is missing from the manifest.');
+        AppObj := TJSONObject(AppValue);
+
+        if not AppObj.TryGetValue<string>('issued_at', Value) or (Value = '') then
+          raise EConvertError.Create('Warning. The issued_at field is missing.');
+        if not TryISO8601ToDate(Value, IssuedAt, True) or
+           (FormatDateTime(UtcTimestampFormat, IssuedAt) <> Value) then
+          raise EConvertError.Create('Use a whole-second UTC timestamp for issued_at.');
+        if not AppObj.TryGetValue<string>('version', Value) or (Value = '') then
+          raise EConvertError.Create('Missing version.');
+        if not AppObj.TryGetValue<string>('download_url', Value) or not IsValidUrl(Value) then
+          raise EConvertError.Create('Missing or invalid download URL.');
+        if not AppObj.TryGetValue<Int64>('file_size', ManifestSize) or (ManifestSize <= 0) then
+          raise EConvertError.Create('Missing or invalid file size.');
+        if not AppObj.TryGetValue<string>('checksum', ManifestChecksum) then
+          raise EConvertError.Create('Missing checksum.');
+        if AppObj.TryGetValue<string>('severity', Value) and
+           (Value <> 'optional') and (Value <> 'recommended') and (Value <> 'critical') then
+          raise EConvertError.Create('Severity must be optional, recommended, or critical.');
+        if not FileExists(EditZip.Text) then
+          raise EConvertError.Create('Select the ZIP file to check its size and checksum.');
+
+        Stream := TFileStream.Create(EditZip.Text, fmOpenRead or fmShareDenyWrite);
+        try
+          RealSize := Stream.Size;
+          RealChecksum := CalcSHA256(Stream);
+        finally
+          Stream.Free;
+        end;
+        if ManifestSize <> RealSize then
+          raise EConvertError.CreateFmt('ZIP file size mismatch. Expected %d bytes, found %d.',
+            [ManifestSize, RealSize]);
+        if not SameText(ManifestChecksum, RealChecksum) then
+          raise EConvertError.Create('ZIP checksum mismatch.');
+
+        Checks.Insert(0, 'Manifest fields, ZIP size and checksum match.');
+        Result := True;
+      except
+        on E: Exception do
+          Checks.Insert(0, E.Message);
       end;
-
-      ManifestChecksum := ExtractChecksumFromManifest(JsonText);
-      ManifestSize := ExtractFileSizeFromManifest(JsonText);
-
-      if ManifestSize <> RealSize then
-        Exit(Format(
-          '❌ File size mismatch:'#13#10 +
-          'Manifest: %d bytes'#13#10 +
-          'Actual ZIP: %d bytes',
-          [ManifestSize, RealSize]));
-
-      if not SameText(ManifestChecksum, RealChecksum) then
-        Exit(
-          '❌ Checksum mismatch:'#13#10 +
-          'Manifest: ' + ManifestChecksum + #13#10 +
-          'Actual:   ' + RealChecksum);
-
-      Result := '✅ Manifest is VALID.' + sLineBreak +
-                'File size and checksum match the ZIP.';
-
     finally
       Root.Free;
     end;
-
-  except
-    on E: Exception do
-      Result := '❌ JSON parse error: ' + E.Message;
+    Msg := TrimRight(Checks.Text);
+  finally
+    Checks.Free;
   end;
-end;
-
-procedure TManifestGeneratorForm.AddColoredLine(
-  const Text: string; Color: TColor);
-begin
-  MemoNotes.SelStart := Length(MemoNotes.Text);
-  MemoNotes.SelAttributes.Color := Color;
-  MemoNotes.Lines.Add(Text);
 end;
 
 procedure TManifestGeneratorForm.AnyFieldChanged(Sender: TObject);

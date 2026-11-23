@@ -196,7 +196,10 @@ def main():
     parser.add_argument('--min-version', default='', help='Minimum version requirement')
     parser.add_argument('--output', default='manifest.json', help='Output manifest file')
     parser.add_argument('--signing-key', help='PEM ECDSA P-256 private key; never distribute')
-    parser.add_argument('--print-public-key', action='store_true',
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--sign-existing', metavar='MANIFEST',
+                      help='Sign the exact bytes of an existing manifest without rewriting it')
+    mode.add_argument('--print-public-key', action='store_true',
                         help='Print the configured-format public key and exit')
     
     args = parser.parse_args()
@@ -207,6 +210,12 @@ def main():
         private_key = load_signing_key(args.signing_key)
         print(public_key_xy_hex(private_key))
         print('Key ID: ' + signing_key_id(public_key_xy_hex(private_key)))
+        return
+
+    if args.sign_existing:
+        if not args.signing_key:
+            parser.error('--sign-existing requires --signing-key')
+        sign_manifest_file(args.sign_existing, args.signing_key)
         return
 
     missing = [name for name in ('app', 'version', 'file') if not getattr(args, name)]
