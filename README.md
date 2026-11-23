@@ -443,8 +443,9 @@ typically cannot update an installation under `C:\Program Files` in place.
 The [signed elevated installer](docs/audit/11-development-roadmap.md) is
 tracked as VAU-T02 for a future release.
 
-Direct UNC installs such as `\\server\share\App` are unsupported. SMB shares
-accessed through a mapped drive letter have not been verified for release.
+Direct UNC installs such as `\\server\share\App` and SMB shares accessed
+through mapped network drives are unsupported. The updater rejects these
+locations before it requests a manifest or starts a download.
 
 If update checks stop after reinstalling an older build at the same path, see
 [trust-floor rollback troubleshooting](docs/security/manifest-anti-rollback.md).

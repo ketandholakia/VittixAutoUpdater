@@ -80,10 +80,11 @@ exception explicitly enabled.
 - Verify Authenticode pins against the expected SHA-256 certificate thumbprint.
 - Try the update from `C:\Program Files` as a standard user. Verify the
   updater reports "Install location not writable" and stays responsive.
-- Run the app directly from an SMB UNC path and verify Install reports that
-  UNC paths are unsupported. Repeat using a real SMB mapped drive such as
-  `Z:` and record the result separately. If installation succeeds, check the
-  installed and backup hashes and verify relaunch.
+- Run the app directly from an SMB UNC path and then from a real SMB mapped
+  drive such as `Z:`. In each case, click Check for Updates and verify that
+  the dialog explains why the location is unsupported. Dismiss it and verify
+  the app remains responsive, Download is disabled, and the endpoint records
+  no manifest or download request.
 - Download the release application over HTTPS and use the release publisher
   certificate on the application and all payload EXEs and DLLs. Set
   `VerifyAuthenticode=True` and configure the publisher certificate's SHA-256
