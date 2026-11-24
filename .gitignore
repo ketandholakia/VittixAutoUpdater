@@ -29,8 +29,9 @@
 # Default Delphi compiler directories
 # Content of this directories are generated with each Compile/Construct of a project.
 # Most of the time, files here have not there place in a code repository.
-#Win32/
-#Win64/
+Win32/
+Win64/
+Win64x/
 #OSX64/
 #OSXARM64/
 #Android/
@@ -73,9 +74,8 @@
 /TestCompilation.res
 /VittixAutoUpdater.zip
 __pycache__/
-/docs/security/DUnitX-Win32.log
-/docs/security/DUnitX-Win64.log
-/docs/security/Python-generator-tests.log
+.pytest_cache/
+/docs/security/*.log
 *.dsk
 
 # Delphi history and backups
