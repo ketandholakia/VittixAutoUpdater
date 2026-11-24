@@ -1,3 +1,5 @@
+> **Superseded.** This October 27, 2026 audit predates the November security fixes. See the [release status](../RELEASE_STATUS.md), [manifest signing](../security/update-manifest-signing.md), [secure staging](../security/VAU-T03-secure-staging.md), and [ZIP extraction security](../security/VAU-T04-zip-extraction-security.md) for the current behavior.
+
 # 10 — Production readiness
 
 ## Weighted score

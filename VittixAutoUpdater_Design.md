@@ -642,7 +642,7 @@ procedure ReportUpdateMetrics(Success: Boolean; Duration: Integer);
 
 ### Delphi/Pascal
 - **Indy HTTP**: HTTP client operations
-- **System.Net.HttpClient**: Modern HTTP (Delphi 10.x+)
+- **System.Net.HttpClient**: HTTP client on the supported Delphi 12 Athens or later baseline
 - **System.Zip**: Built-in ZIP handling
 - **SynZip**: Alternative ZIP library
 - **OpenSSL**: HTTPS support

@@ -1,75 +1,28 @@
 # VittixAutoUpdater
 
-**Version:** 1.0.0  
-**Author:** Vittix  
-**License:** MIT  
-**Language:** Delphi/Pascal (compatible with Free Pascal)  
+VittixAutoUpdater is an MIT-licensed VCL component and update engine for Delphi
+applications on Windows. The compiler baseline is Delphi 12 Athens or later.
+Delphi 12 Athens is the oldest verified compiler.
 
-## Project Structure
+- `VittixAutoUpdaterRuntime.dpk` provides the update engine, networking,
+  staging, visual component, and settings dialog for Win32 and Win64.
+- `VittixAutoUpdaterDesign.dpk` registers the component and property editors in
+  the Delphi 12 Win32 IDE. It depends on the runtime package.
 
-```
-VittixAutoUpdater/
-├── Source/
-│   ├── VittixAutoUpdater.Types.pas       - Core types and version management
-│   ├── VittixAutoUpdater.Network.pas     - HTTP operations and downloads
-│   └── VittixAutoUpdater.Engine.pas      - Main update orchestration engine
-│
-├── Demo/
-│   └── VittixAutoUpdaterDemo.dpr         - Console demo application
-│
-├── Tools/
-│   ├── generate_manifest.py              - Python manifest generator
-│   └── deploy-update.sh                  - Bash deployment script
-│
-├── Documentation/
-│   ├── VittixAutoUpdater_Design.md       - Complete architecture design
-│   └── README.md                          - Usage guide and examples
-│
-└── Examples/
-    └── manifest.json                      - Sample update manifest
-```
+## Repository layout
 
-## Quick Installation
+| Path | Contents |
+| --- | --- |
+| Repository root | Package projects, Delphi units, DUnitX project and fixtures, package build script, Python manifest generator, and signed sample manifest |
+| `demo/` | VCL demo application and settings |
+| `ManifestGenerator/` | Delphi GUI for preparing and signing manifests offline |
+| `tests/` | Python signing tests, shared signing vector, and cross-process staging test worker |
+| `tools/` | Release ZIP script |
+| `docs/security/` | Current security design and verification notes |
+| `docs/audit/` | October 2026 audit records |
+| `docs/release/` | Release acceptance results |
 
-1. Add the three `.pas` files to your Delphi/FPC project
-2. Add to uses clause: `VittixAutoUpdater.Types, VittixAutoUpdater.Engine`
-3. Configure and use as shown in README.md
-
-## Compatibility
-
-- ✅ Delphi 12 Athens is the oldest verified compiler
-- ✅ Free Pascal (FPC) with -Mdelphi mode
-- ✅ Windows only
-
-## Features
-
-- Semantic versioning
-- Multi-mirror fallback URLs
-- SHA256 checksum verification
-- Progress tracking
-- Automatic retry with exponential backoff
-- Safe file replacement
-- Rollback mechanism
-- Async operations
-- Beta/stable channels
-
-## Dependencies
-
-### Delphi
-- System.Net.HttpClient
-- System.Net.URLClient
-- System.Hash
-- System.JSON
-- System.Zip
-
-### Free Pascal
-- fphttpclient (requires -dUseFPHTTPClient define)
-- Alternative: Use Indy or Synapse
-
-## Support
-
-For issues, questions, or contributions, please refer to the documentation.
-
----
-
-**VittixAutoUpdater** - Making software updates simple and reliable.
+See the [package installation guide](PACKAGE_INSTALLATION.md) to build and
+install the packages and the [quick start](QUICK_START.md) to configure the
+component in a VCL application. See [release status](docs/RELEASE_STATUS.md)
+for the audit follow-up and build verification steps.
