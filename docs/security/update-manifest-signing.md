@@ -19,6 +19,20 @@ at `https://updates.example.test/manifest.json.sig?channel=stable`. Redirects
 retain only the final response body for verification and parsing.
 
 
+## Signed test example
+
+The repository includes a [signed sample manifest](../../manifest.json), its
+[detached signature](../../manifest.json.sig), a [test public key](../../tests/vectors/manifest-test-public-key.txt)
+in `X||Y` format, and the [payload fixture](../../tests/vectors/sample-payload.zip)
+whose SHA-256 and size appear in the manifest. The Python generator signed the
+sample with a disposable P-256 key. Trust the public key only in tests.
+
+The sample demonstrates exact-byte signature verification and the manifest
+format. Its reserved `.test` URL and data-only ZIP are fixture inputs. For a
+live test, use a fresh signed manifest with your own disposable key, test HTTPS
+endpoint, and an installable test payload. The sample's `issued_at` will age out
+under the updater's freshness policy.
+
 ## Developer workflow
 
 1. Install the Python `cryptography` package on an offline signing workstation.

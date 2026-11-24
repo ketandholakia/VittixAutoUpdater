@@ -49,6 +49,29 @@ def test_generator_key_id_is_sha256_of_raw_xy():
     ).hexdigest()
 
 
+def test_repository_sample_signature_and_payload():
+    root = SCRIPT.parent
+    vectors = root / "tests" / "vectors"
+    manifest = (root / "manifest.json").read_bytes()
+    envelope = (root / "manifest.json.sig").read_text("ascii").strip()
+    algorithm, key_id, signature = envelope.split(":")
+    public_hex = (vectors / "manifest-test-public-key.txt").read_text("ascii").strip()
+    assert algorithm == "VAU-ECDSA-P256-SHA256-v1"
+    assert key_id == generator.signing_key_id(public_hex)
+    public_key = ec.EllipticCurvePublicKey.from_encoded_point(
+        ec.SECP256R1(), b"\x04" + bytes.fromhex(public_hex)
+    )
+    raw = base64.b64decode(signature, validate=True)
+    assert len(raw) == 64
+    der = encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
+    public_key.verify(der, manifest, ec.ECDSA(hashes.SHA256()))
+
+    entry = json.loads(manifest)["SampleApp"]
+    payload = (vectors / "sample-payload.zip").read_bytes()
+    assert entry["file_size"] == len(payload) > 0
+    assert entry["checksum"] == f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
 def test_manifest_generator_writes_utf8_lf(tmp_path):
     manifest_path = tmp_path / "manifest.json"
     generator.update_manifest_file(

@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Preserve the exact bytes covered by the detached signature.
+/manifest.json -text
