@@ -34,6 +34,14 @@ Build `TestCompilation.dproj` in Debug for Win32 and Win64 and run each
 `TestCompilation.exe` from the output directories under
 `%TEMP%\VittixAutoUpdaterTests`. The pytest suite runs on pushes.
 
+## Source archive
+
+Run `powershell -File tools/make-release-zip.ps1` from the repository root
+after committing the intended release contents. It archives `HEAD` to
+`VittixAutoUpdater.zip`. Use `-OutputPath` to select another destination.
+The optional `-IncludeTestLogs` switch includes any already committed
+`docs/security/*.log` files. Keep new test logs with release evidence.
+
 ## Registry and clean-VM acceptance
 
 `EnginePersistsRollbackFloorAndRejectsReplayedManifest` and
